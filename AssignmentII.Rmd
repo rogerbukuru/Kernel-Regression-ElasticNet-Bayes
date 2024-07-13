@@ -10,6 +10,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+library(ggplot2)
 rm(list = ls())
-temp_data = read.csv2("tempexam.csv")
+filepath = "data/tempexam.csv"
+temp_data = read.csv2(filepath)
+summary(temp_data)
+
+plot(temp_data, type="l", ylab="Temperature", xlab="Dates")
 ```
