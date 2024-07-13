@@ -1,0 +1,15 @@
+---
+title: "Advanced Topics in Regression - Assignment II"
+author: "Roger Bukuru"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+temp_data = read.csv2("tempexam.csv")
+```
