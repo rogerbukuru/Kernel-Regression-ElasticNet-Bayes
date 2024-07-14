@@ -78,13 +78,14 @@ loo_cv = function(data){
    }
  }
  colnames(cv_grid) = c("x", paste0("h", 1:30))
- mse = apply(cv_error_grid[,-1], 2, sum)
+ mse = apply(cv_error_grid[,-1], 2, mean)
  return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
 
 loo_cv_result = loo_cv(temp_data)
 cv_errors = loo_cv_result$errors
 cv_mse = loo_cv_result$mse
+plot(cv_mse, type = "l")
 optimal_bandwith = which.min(cv_mse)
 
 # Use optimal bandwith to plot estimate
