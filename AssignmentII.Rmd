@@ -9,6 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Question 1
+
+## (a)
+
+## b 
+
+### i
+
 ```{r}
 library(ggplot2)
 library(tidyverse)
@@ -18,8 +26,6 @@ rm(list = ls())
 filepath = "data/tempexam.csv"
 temp_data = read.csv2(filepath)
 summary(temp_data)
-
-plot(temp_data, type="l", ylab="Temperature", xlab="Dates")
 
 # Nadayara-Watson function
 gaussian_kernel = function(x,h){
@@ -35,9 +41,42 @@ nw_estimator = function(x, observed_x, observed_y, h){
 
 x_train = as.matrix(temp_data$Dates)
 y_train = as.matrix(as.numeric(temp_data$y))
-#max(x_train)
-fitted_temp = sapply(x_train, nw_estimator,observed_x = x_train, observed_y = y_train, 500)
-fitted_temp_data = data.frame(x= x_train, y = fitted_temp)
-plot(fitted_temp, type="l", ylab="Temperature", xlab="Dates")
+
+y_hat = sapply(x_train, nw_estimator,observed_x = x_train, observed_y = y_train, 0.5)
+final_temp_data = data.frame(x= x_train, y = y_train, y_hat=y_hat)
+
+# Plot Nadayara-Watson estimators against the original data
+ggplot(final_temp_data, aes(x = x, y = y)) +
+  geom_line(color = "blue") +
+  geom_line(aes(y = y_hat), color = "red") +
+  labs(title = "Nadaraya-Watson Regression Smoothing",
+       x = "Year",
+       y = "Temperature")
+```
+
+### ii
+
+```{r}
+# Leave one-out-cross-validation
+
+loo_cv = function(data){
+  cv_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+ for (i in 1:nrow(data)){
+   training_set = data[-i, ]
+   validation_set = data[i, ]
+   x_train = as.matrix(data$Dates)
+   y_train = as.matrix(as.numeric(data$y))
+   x_validation = as.matrix(validation_set$Dates)
+   cv_grid[i,1] = x_validation
+   for( h in 2:31){
+     y_hat = sapply(x_validation, nw_estimator,observed_x = x_train, observed_y = y_train, h)
+     cv_grid[i,h] = y_hat
+   }
+ }
+ colnames(cv_grid) = c("x", paste0("h", 1:30))
+ return (cv_grid)
+}
+
+cv_results = loo_cv(temp_data)
 
 ```
