@@ -60,23 +60,42 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 # Leave one-out-cross-validation
 
 loo_cv = function(data){
-  cv_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+ cv_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+ cv_error_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
  for (i in 1:nrow(data)){
    training_set = data[-i, ]
    validation_set = data[i, ]
    x_train = as.matrix(data$Dates)
    y_train = as.matrix(as.numeric(data$y))
    x_validation = as.matrix(validation_set$Dates)
+   y_validation = as.matrix(as.numeric(validation_set$y))
    cv_grid[i,1] = x_validation
+   cv_error_grid[i, 1] = x_validation
    for( h in 2:31){
      y_hat = sapply(x_validation, nw_estimator,observed_x = x_train, observed_y = y_train, h)
      cv_grid[i,h] = y_hat
+     cv_error_grid[i, h] = (y_validation - y_hat)^2
    }
  }
  colnames(cv_grid) = c("x", paste0("h", 1:30))
- return (cv_grid)
+ mse = apply(cv_error_grid[,-1], 2, sum)
+ return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
 
-cv_results = loo_cv(temp_data)
+loo_cv_result = loo_cv(temp_data)
+cv_errors = loo_cv_result$errors
+cv_mse = loo_cv_result$mse
+optimal_bandwith = which.min(cv_mse)
 
+# Use optimal bandwith to plot estimate
+y_hat = sapply(x_train, nw_estimator,observed_x = x_train, observed_y = y_train, optimal_bandwith)
+final_temp_data = data.frame(x= x_train, y = y_train, y_hat=y_hat)
+
+# Plot Nadayara-Watson estimators against the original data
+ggplot(final_temp_data, aes(x = x, y = y)) +
+  geom_line(color = "blue") +
+  geom_line(aes(y = y_hat), color = "red") +
+  labs(title = "Nadaraya-Watson Regression Smoothing",
+       x = "Year",
+       y = "Temperature")
 ```
