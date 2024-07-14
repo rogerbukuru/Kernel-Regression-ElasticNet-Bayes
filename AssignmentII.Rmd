@@ -11,10 +11,33 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(ggplot2)
+library(tidyverse)
+library(dplyr)
+
 rm(list = ls())
 filepath = "data/tempexam.csv"
 temp_data = read.csv2(filepath)
 summary(temp_data)
 
 plot(temp_data, type="l", ylab="Temperature", xlab="Dates")
+
+# Nadayara-Watson function
+gaussian_kernel = function(x,h){
+  return ((1/sqrt(2*pi*(h^2))) * exp(-0.5*(x/h)^2))
+}
+
+nw_estimator = function(x, observed_x, observed_y, h){
+ weights = sapply(observed_x, function(xi) gaussian_kernel(abs(x-xi), h))
+ weights = weights/sum(weights) # normalize weights
+ y_hat = sum(weights * observed_y)
+ return (y_hat)
+}
+
+x_train = as.matrix(temp_data$Dates)
+y_train = as.matrix(as.numeric(temp_data$y))
+#max(x_train)
+fitted_temp = sapply(x_train, nw_estimator,observed_x = x_train, observed_y = y_train, 500)
+fitted_temp_data = data.frame(x= x_train, y = fitted_temp)
+plot(fitted_temp, type="l", ylab="Temperature", xlab="Dates")
+
 ```
