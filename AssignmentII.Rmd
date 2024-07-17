@@ -123,28 +123,29 @@ regopt = function(tuning, Y, X, nitermax=20){
   lambda2 = tuning[2]
   
   # Gradient Descent Learning Rate hyperparameter 
-  alpha = 0.01 # Learning rate
+  alpha = 0.001 # Learning rate
   p = ncol(X)
   beta  = rep(0,p)
   
   A = NULL
   if(all(tuning==c(0,0))){
-    # compute OLS
-    A = compute_ols(tuning, Y,X, beta)
+    # compute OLS Beta
+    beta = ols_beta(Y,X)
   
   }else {
      for (i in 1:nitermax) {
        beta = beta_gradient_desc(tuning, Y, X, beta,alpha) 
      }
-    A = elastic_net_obj_function(tuning, Y,X, beta)
   }
+  A = elastic_net_obj_function(tuning, Y,X, beta)
   errortol = t((Y-X%*%beta))%*%(Y-X%*%beta) # This is the residual sum of of squares error
   return(list(errortol= errortol, beta = beta, A = A))
   
 }
 
-compute_ols = function(tuning, Y,X, beta){
-  
+ols_beta = function(Y,X){
+  beta_hat = solve(t(X)%*%X)%*%t(X)%*%Y
+  return (beta_hat)
 }
 
 elastic_net_obj_function = function(tuning, Y,X, beta){
@@ -176,7 +177,7 @@ Y_train = as.matrix(in_sample_obs_std$lpsa)
 colnames(Y_train) = "lpsa"
 X_train = as.matrix(in_sample_obs_std[, -9])
 # Execute regopt
-tuning <- c(0.001, 0.001)
+tuning <- c(0, 0)
 result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 print(result)
 ```
@@ -184,10 +185,12 @@ print(result)
 ## b(ii)
 
 ```{r}
-loo_cv = function(Y,X, ridge_regression=TRUE){
-  # Setup up cross-validation grid matrix
+loo_cv = function(Y,X, lasso_regression=TRUE){
+  
   n = nrow(Y)
+  # Lambda range [0,5] across 100 points
   lambda_range = seq(0,5, length.out=100)
+  # Setup up cross-validation grid matrix
   cv_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range)) 
   # Setup cross validation error grid matrix
   cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range))
@@ -198,15 +201,11 @@ loo_cv = function(Y,X, ridge_regression=TRUE){
     x_validation_set = X[i,]
     y_training_set  = Y[-i,]
     y_validation_set = Y[i,]
-    # Use the first column as coefficient column
-    #cv_grid[,1] = x_validation_set
-    # Use first column as coefficient column
-    #cv_error_grid[, 1] = x_validation_set
     for (j in 1: length(lambda_range)){
       tuning = c(0, 0)
       result = NA
       lambda = lambda_range[j]
-      if(ridge_regression){
+      if(lasso_regression){
         tuning = c(lambda, 0)
         result = regopt(tuning, y_training_set, x_training_set, nitermax = 20)
       }else{
@@ -224,20 +223,19 @@ loo_cv = function(Y,X, ridge_regression=TRUE){
   return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
 
-# Cross-validation for Ridge Regression
-ridge_loo_cv_result = loo_cv(Y_train,X_train,ridge_regression=TRUE)
-ridge_reg_fitted_vals = ridge_loo_cv_result$fitted_values
-ridge_reg_errors = ridge_loo_cv_result$errors
-ridge_reg_mse = ridge_loo_cv_result$mse
-optimal_ridge_lambda = which.min(ridge_reg_mse)
-optimal_ridge_lambda 
-
 # Cross-validation for Lasso Regression
-
-lasso_loo_cv_result = loo_cv(Y_train,X_train,ridge_regression=FALSE)
+lasso_loo_cv_result = loo_cv(Y_train,X_train,lasso_regression=FALSE)
 lasso_reg_fitted_vals = lasso_loo_cv_result$fitted_values
 lasso_reg_errors = lasso_loo_cv_result$errors
 lasso_reg_mse = lasso_loo_cv_result$mse
 optimal_lasso_lambda = which.min(lasso_reg_mse)
 optimal_lasso_lambda 
+
+# Cross-validation for Ridge Regression
+ridge_loo_cv_result = loo_cv(Y_train,X_train,lasso_regression=FALSE)
+ridge_reg_fitted_vals = ridge_loo_cv_result$fitted_values
+ridge_reg_errors = ridge_loo_cv_result$errors
+ridge_reg_mse = ridge_loo_cv_result$mse
+optimal_ridge_lambda = which.min(ridge_reg_mse)
+optimal_ridge_lambda 
 ```
