@@ -83,6 +83,7 @@ loo_cv = function(data){
 }
 
 loo_cv_result = loo_cv(temp_data)
+fitted_vals = loo_cv_result$fitted_values
 cv_errors = loo_cv_result$errors
 cv_mse = loo_cv_result$mse
 plot(cv_mse, type = "l")
@@ -185,38 +186,58 @@ print(result)
 ```{r}
 loo_cv = function(Y,X, ridge_regression=TRUE){
   # Setup up cross-validation grid matrix
-  cv_grid = matrix(data=NA, nrow=nrow(X), ncol = ncol(X)+1) 
-  # Setup cross validation error grid matrix
-  cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = ncol(X)+1)
+  n = nrow(Y)
   lambda_range = seq(0,5, length.out=100)
-  for( i in 1:nrow(X)){
+  cv_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range)) 
+  # Setup cross validation error grid matrix
+  cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range))
+  
+  for( i in 1:n){
     # Leave one observation out
     x_training_set = X[-i,]
     x_validation_set = X[i,]
+    y_training_set  = Y[-i,]
+    y_validation_set = Y[i,]
     # Use the first column as coefficient column
-    cv_grid[i,1] = x_validation_set
+    #cv_grid[,1] = x_validation_set
     # Use first column as coefficient column
-    cv_error_grid[i, 1] = x_validation_set
-    for (j in 1: length(lambda_range )){
+    #cv_error_grid[, 1] = x_validation_set
+    for (j in 1: length(lambda_range)){
       tuning = c(0, 0)
       result = NA
       lambda = lambda_range[j]
       if(ridge_regression){
         tuning = c(lambda, 0)
-        result = regopt(tuning, Y, X, nitermax = 20)
+        result = regopt(tuning, y_training_set, x_training_set, nitermax = 20)
       }else{
         tuning = c(0, lambda)
-        result = regopt(tuning, Y, X, nitermax = 20)
+        result = regopt(tuning, y_training_set, x_training_set, nitermax = 20)
       }
-       y_validation_set = Y[i,]
-       y_hat = X%*%result$beta
+       y_hat = x_validation_set%*%result$beta
        cv_grid[i,j] = y_hat
-       cv_error_grid[i, j] = (y_validation - y_hat)^2
+       cv_error_grid[i, j] = (y_validation_set - y_hat)^2
     }
   }
-  colnames(cv_grid) = c("x", paste0("lambda", lambda_range))
-  mse = apply(cv_error_grid[,-1], 2, mean)
+  colnames(cv_grid) = c(paste0("lambda", c(lambda_range)))
+  colnames(cv_error_grid) = c(paste0("lambda", c(lambda_range)))
+  mse = apply(cv_error_grid, 2, mean)
   return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
-loo_cv(Y_train,X_train)
+
+# Cross-validation for Ridge Regression
+ridge_loo_cv_result = loo_cv(Y_train,X_train,ridge_regression=TRUE)
+ridge_reg_fitted_vals = ridge_loo_cv_result$fitted_values
+ridge_reg_errors = ridge_loo_cv_result$errors
+ridge_reg_mse = ridge_loo_cv_result$mse
+optimal_ridge_lambda = which.min(ridge_reg_mse)
+optimal_ridge_lambda 
+
+# Cross-validation for Lasso Regression
+
+lasso_loo_cv_result = loo_cv(Y_train,X_train,ridge_regression=FALSE)
+lasso_reg_fitted_vals = lasso_loo_cv_result$fitted_values
+lasso_reg_errors = lasso_loo_cv_result$errors
+lasso_reg_mse = lasso_loo_cv_result$mse
+optimal_lasso_lambda = which.min(lasso_reg_mse)
+optimal_lasso_lambda 
 ```
