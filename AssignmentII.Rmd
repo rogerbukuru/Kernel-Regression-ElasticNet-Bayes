@@ -106,23 +106,15 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 
 ```{r}
 
-# regopt <- function(tuning, Y, X, nitermax=20){
-# #tuning=[lambda1, lambda2] = tuning parameters in this order
-# #Y and X = the response and the design matrix
-# #nitermax = the number of iterations used to
-# #evaluate the function that is being minimised (i.e. A)
-# #put some code here if required
-# #return these objects
-# #errortol is some error tolerance value
-# list(errortol=errortol, beta=beta, A=A)
-#}
-
 regopt = function(tuning, Y, X, nitermax=20){
   lamba1 = tuning[1]
   lambda2 = tuning[2]
   
   # Gradient Descent Learning Rate hyperparameter 
   alpha = 0.01 # Learning rate
+  p = ncol(X)
+  beta  = rep(0,p)
+  
   A = NULL
   if(all(tuning==c(0,0))){
     # compute OLS
@@ -130,9 +122,8 @@ regopt = function(tuning, Y, X, nitermax=20){
   
   }else {
      for (i in 1:nitermax) {
-       beta = beta_gradient_desc(tuning, Y, X, alpha) 
+       beta = beta_gradient_desc(tuning, Y, X, beta,alpha) 
      }
-    print(beta)
     A = elastic_net_obj_function(tuning, Y,X, beta)
   }
   errortol = t((Y-X%*%beta))%*%(Y-X%*%beta)
@@ -145,41 +136,38 @@ compute_ols = function(tuning, Y,X, beta){
 }
 
 elastic_net_obj_function = function(tuning, Y,X, beta){
-  lamba1 = tuning[1]
+  lambda1 = tuning[1]
   lambda2 = tuning[2]
-  one_transponse = t(matrix(1, nrow=nrows(X), ncol=ncol(X)))
+  one_transponse = t(matrix(1, nrow=length(beta), ncol=1))
   rss = t((Y-X%*%beta))%*%(Y-X%*%beta)
-  lasso_penalty = lambda1 * one_transponse * sign(beta)
+  lasso_penalty = lambda1 * one_transponse %*% abs(beta)
   ridge_penalty = lambda2 * t(beta)%*%beta
   A = rss + lasso_penalty + ridge_penalty
   return(A)
 }
   
 beta_gradient_desc = function(tuning, Y,X, beta, alpha){
-  lamba1 = tuning[1]
+  lambda1 = tuning[1]
   lambda2 = tuning[2]
-  gradient_rss   = -2*t(X) %*%Y + 2*t(X)%*%X%*%beta
-  gradient_lasso = lamba1 * t(matrix(1, nrow=ncol(X), ncol=1))%*%sign(beta)
+  gradient_rss   = -2*(t(X) %*%Y) + 2*(t(X)%*%X%*%beta)
+  gradient_lasso = lambda1 * sign(beta)
   gradient_ridge = 2*lambda2 * beta
   beta_old_slope = gradient_rss + gradient_lasso + gradient_ridge
   beta_new = beta -  (alpha*beta_old_slope)
   return (beta_new)
 }
 
+
 set.seed(123)
 n = 20
-p = 1
+p = 5
 
 X <- matrix(rnorm(n * p), n, p)
 beta_true <- rnorm(p)
 Y <- X %*% beta_true + rnorm(n)
 
-# Run the function with given tuning parameters
+# Execute regopt
 tuning <- c(0.1, 0.1)
-beta_gradient_desc(tuning, Y, X, beta_true, alpha =0.1)
-
 result <- regopt(tuning, Y, X, nitermax = 1000)
-
-# Print the results
 print(result)
 ```
