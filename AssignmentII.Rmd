@@ -275,5 +275,18 @@ bootstrap_lasso_fit = function(data, indices){
  return(lasso_coefficients)
 }
 
-boot(data = in_sample_obs_std, statistic = bootstrap_lasso_fit, R = 1000)
+boot_results = boot(data = in_sample_obs_std, statistic = bootstrap_lasso_fit, R = 1000)
+bootstrap_estimates <- boot_results$t
+boot_results
+
+
+compute_ci <- function(bootstrap_estimates, level = 0.95) {
+  ci_lower <- apply(bootstrap_estimates, 2, quantile, probs = (1 - level) / 2)
+  ci_upper <- apply(bootstrap_estimates, 2, quantile, probs = 1 - (1 - level) / 2)
+  return(data.frame(Lower = ci_lower, Upper = ci_upper))
+}
+
+# Compute 95% confidence intervals for each coefficient
+confidence_intervals <- compute_ci(bootstrap_estimates)
+print(confidence_intervals)
 ```
