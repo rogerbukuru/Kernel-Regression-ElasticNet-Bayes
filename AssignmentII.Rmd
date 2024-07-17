@@ -173,7 +173,7 @@ Y_train = as.matrix(in_sample_obs_std$lpsa)
 colnames(Y_train) = "lpsa"
 X_train = as.matrix(in_sample_obs_std[, -9])
 # Execute regopt
-tuning <- c(0.1, 0.1)
-result <- regopt(tuning, Y_train, X_train, nitermax = 20)
+tuning <- c(0.001, 0.001)
+result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 print(result)
 ```
