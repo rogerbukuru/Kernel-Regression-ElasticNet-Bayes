@@ -104,6 +104,8 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 
 # Question 2
 
+## b(i)
+
 ```{r}
 library(tidyverse)
 
@@ -176,4 +178,61 @@ X_train = as.matrix(in_sample_obs_std[, -9])
 tuning <- c(0.001, 0.001)
 result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 print(result)
+```
+
+## b(ii)
+
+```{r}
+
+loo_cv = function(data){
+ cv_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+ cv_error_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+ for (i in 1:nrow(data)){
+   training_set = data[-i, ]
+   validation_set = data[i, ]
+   x_train = as.matrix(data$Dates)
+   y_train = as.matrix(as.numeric(data$y))
+   x_validation = as.matrix(validation_set$Dates)
+   y_validation = as.matrix(as.numeric(validation_set$y))
+   cv_grid[i,1] = x_validation
+   cv_error_grid[i, 1] = x_validation
+   for( h in 2:31){
+     y_hat = sapply(x_validation, nw_estimator,observed_x = x_train, observed_y = y_train, h)
+     cv_grid[i,h] = y_hat
+     cv_error_grid[i, h] = (y_validation - y_hat)^2
+   }
+ }
+ colnames(cv_grid) = c("x", paste0("h", 1:30))
+ mse = apply(cv_error_grid[,-1], 2, mean)
+ return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
+}
+loo_cv = function(Y,X, ridge_regression=TRUE){
+  # Setup up cross-validation grid matrix
+  cv_grid = matrix(data=NA, nrow=nrow(X), ncol = ncol(X)+1) 
+  # Setup cross validation error grid matrix
+  cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = ncol(X)+1)
+  lambda_range = seq(0,5, length.out=100)
+  for( i in 1:nrow(X)){
+    # Leave one observation out
+    training_set = X[-i,]
+    validation_set = X[i,]
+    # Use the first column as coefficient column
+    cv_grid[i,1] = validation_set
+    # Use first column as coefficient column
+    cv_error_grid[i, 1] = validation_set
+    for (lambda in lambda_range ){
+      tuning = c(0, 0)
+      result = NA
+      if(ridge_regression){
+        tuning = c(lambda, 0)
+        result = regopt(tuning, Y, X, nitermax = 20)
+      }else{
+        tuning = c(0, lambda)
+        result = regopt(tuning, Y, X, nitermax = 20)
+      }
+      
+    }
+  }
+  
+}
 ```
