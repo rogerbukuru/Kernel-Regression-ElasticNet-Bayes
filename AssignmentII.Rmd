@@ -119,7 +119,7 @@ out_of_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==FALSE)
 
 regopt = function(tuning, Y, X, nitermax=20){
-  lamba1 = tuning[1]
+  lambda1 = tuning[1]
   lambda2 = tuning[2]
   
   # Gradient Descent Learning Rate hyperparameter 
@@ -137,7 +137,7 @@ regopt = function(tuning, Y, X, nitermax=20){
        beta = beta_gradient_desc(tuning, Y, X, beta,alpha) 
      }
   }
-  A = elastic_net_obj_function(tuning, Y,X, beta)
+  A = elastic_net_obj_function(tuning, Y,X, beta) 
   errortol = t((Y-X%*%beta))%*%(Y-X%*%beta) # This is the residual sum of of squares error
   return(list(errortol= errortol, beta = beta, A = A))
   
@@ -148,6 +148,14 @@ ols_beta = function(Y,X){
   return (beta_hat)
 }
 
+  compute_A <- function(Y, X, beta, lambda1, lambda2) {
+    residual_sum_squares <- sum((Y - X %*% beta)^2)
+    lasso_penalty <- lambda1 * sum(abs(beta))
+    ridge_penalty <- lambda2 * sum(beta^2)
+    A <- residual_sum_squares + lasso_penalty + ridge_penalty
+    return(A)
+  }
+  
 elastic_net_obj_function = function(tuning, Y,X, beta){
   lambda1 = tuning[1]
   lambda2 = tuning[2]
@@ -177,7 +185,7 @@ Y_train = as.matrix(in_sample_obs_std$lpsa)
 colnames(Y_train) = "lpsa"
 X_train = as.matrix(in_sample_obs_std[, -9])
 # Execute regopt
-tuning <- c(0, 0)
+tuning <- c(0.1, 0.1)
 result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 print(result)
 ```
@@ -185,15 +193,13 @@ print(result)
 ## b(ii)
 
 ```{r}
-loo_cv = function(Y,X, lasso_regression=TRUE){
+loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
   
   n = nrow(Y)
-  # Lambda range [0,5] across 100 points
-  lambda_range = seq(0,5, length.out=100)
   # Setup up cross-validation grid matrix
-  cv_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range)) 
+  cv_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambdas)) 
   # Setup cross validation error grid matrix
-  cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambda_range))
+  cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambdas))
   
   for( i in 1:n){
     # Leave one observation out
@@ -201,10 +207,10 @@ loo_cv = function(Y,X, lasso_regression=TRUE){
     x_validation_set = X[i,]
     y_training_set  = Y[-i,]
     y_validation_set = Y[i,]
-    for (j in 1: length(lambda_range)){
+    for (j in 1: length(lambdas)){
       tuning = c(0, 0)
       result = NA
-      lambda = lambda_range[j]
+      lambda = lambdas[j]
       if(lasso_regression){
         tuning = c(lambda, 0)
         result = regopt(tuning, y_training_set, x_training_set, nitermax = 20)
@@ -217,25 +223,57 @@ loo_cv = function(Y,X, lasso_regression=TRUE){
        cv_error_grid[i, j] = (y_validation_set - y_hat)^2
     }
   }
-  colnames(cv_grid) = c(paste0("lambda", c(lambda_range)))
-  colnames(cv_error_grid) = c(paste0("lambda", c(lambda_range)))
+  colnames(cv_grid) = c(paste0("lambda", c(lambdas)))
+  colnames(cv_error_grid) = c(paste0("lambda", c(lambdas)))
   mse = apply(cv_error_grid, 2, mean)
   return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
 
+# Lambda range [0,5] across 100 points
+lambdas = seq(0,5, length.out=100)
+
 # Cross-validation for Lasso Regression
-lasso_loo_cv_result = loo_cv(Y_train,X_train,lasso_regression=FALSE)
+lasso_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=TRUE)
 lasso_reg_fitted_vals = lasso_loo_cv_result$fitted_values
 lasso_reg_errors = lasso_loo_cv_result$errors
 lasso_reg_mse = lasso_loo_cv_result$mse
-optimal_lasso_lambda = which.min(lasso_reg_mse)
+optimal_lasso_lambda = lambdas[which.min(lasso_reg_mse)]
 optimal_lasso_lambda 
 
+# Lasso Coefficients
+tuning = c(optimal_lasso_lambda,0 )
+lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+lasso_coefficients = lasso_result$beta
+
 # Cross-validation for Ridge Regression
-ridge_loo_cv_result = loo_cv(Y_train,X_train,lasso_regression=FALSE)
+ridge_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=FALSE)
 ridge_reg_fitted_vals = ridge_loo_cv_result$fitted_values
 ridge_reg_errors = ridge_loo_cv_result$errors
 ridge_reg_mse = ridge_loo_cv_result$mse
-optimal_ridge_lambda = which.min(ridge_reg_mse)
+optimal_ridge_lambda = lambdas[which.min(ridge_reg_mse)]
 optimal_ridge_lambda 
+
+# Ridge Coefficients
+tuning = c(0,optimal_ridge_lambda )
+ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+ridge_coefficients = ridge_result$beta
+```
+
+## b (iii)
+
+```{r}
+library(boot)
+set.seed(123)
+bootstrap_lasso_fit = function(data, indices){
+ data = data[indices,]
+ Y_train = as.matrix(data$lpsa)
+ colnames(Y_train) = "lpsa"
+ X_train = as.matrix(data[, -9])
+ tuning = c(optimal_lasso_lambda,0 )
+ lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+ lasso_coefficients = lasso_result$beta
+ return(lasso_coefficients)
+}
+
+boot(data = in_sample_obs_std, statistic = bootstrap_lasso_fit, R = 1000)
 ```
