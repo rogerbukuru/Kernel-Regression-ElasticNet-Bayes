@@ -290,3 +290,36 @@ compute_ci <- function(bootstrap_estimates, level = 0.95) {
 confidence_intervals <- compute_ci(bootstrap_estimates)
 print(confidence_intervals)
 ```
+
+# Question 3
+
+```{r}
+library(MASS)
+library(coda)
+rm(list = ls())
+
+patient_profiles = read.csv2("data/profiles2024.csv")
+patient_profiles = patient_profiles[1:25,]
+
+# Initial Settings
+n = 25
+T = 7
+p = 3
+iterations = 30000
+burn_in = 10000
+
+
+# Chain Starting values 
+sigma_e2 = 1
+sigma_phi2 = 2
+phi = matrix(0, nrow=n, ncol=4)
+
+# prior values
+i1 = 2
+i2 = 0.1
+i3 = 2
+i4 = 0.001
+
+# Store initial samples
+
+```
