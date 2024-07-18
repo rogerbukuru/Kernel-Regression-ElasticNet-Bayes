@@ -49,7 +49,7 @@ final_temp_data = data.frame(x= x_train, y = y_train, y_hat=y_hat)
 ggplot(final_temp_data, aes(x = x, y = y)) +
   geom_line(color = "blue") +
   geom_line(aes(y = y_hat), color = "red") +
-  labs(title = "Nadaraya-Watson Regression Smoothing",
+  labs(title = "Nadaraya-Watson Regression Smoothing h=0.5",
        x = "Year",
        y = "Temperature")
 ```
@@ -59,9 +59,11 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 ```{r}
 # Leave one-out-cross-validation
 
-loo_cv = function(data){
- cv_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
- cv_error_grid = matrix(data=NA, nrow=nrow(data), ncol = 31)
+loo_cv = function(data,bandwidths){
+  
+ cv_grid = matrix(data=NA, nrow=nrow(data), ncol = length(bandwidths)+1)
+ cv_error_grid = matrix(data=NA, nrow=nrow(data), ncol = length(bandwidths)+1)
+ 
  for (i in 1:nrow(data)){
    training_set = data[-i, ]
    validation_set = data[i, ]
@@ -71,23 +73,27 @@ loo_cv = function(data){
    y_validation = as.matrix(as.numeric(validation_set$y))
    cv_grid[i,1] = x_validation
    cv_error_grid[i, 1] = x_validation
-   for( h in 2:31){
+   
+   for( j in 1:length(bandwidths)){
+     h = bandwidths[j]
      y_hat = sapply(x_validation, nw_estimator,observed_x = x_train, observed_y = y_train, h)
-     cv_grid[i,h] = y_hat
-     cv_error_grid[i, h] = (y_validation - y_hat)^2
+     cv_grid[i,j+1] = y_hat
+     cv_error_grid[i, j+1] = (y_validation - y_hat)^2
    }
  }
- colnames(cv_grid) = c("x", paste0("h", 1:30))
+ colnames(cv_grid) = c("x", paste0("h", 1:length(bandwidths)+1))
  mse = apply(cv_error_grid[,-1], 2, mean)
  return (list(fitted_values = cv_grid, errors = cv_error_grid, mse=mse))
 }
 
-loo_cv_result = loo_cv(temp_data)
+bandwidths = seq(1,30, length.out=101)
+
+loo_cv_result = loo_cv(temp_data,bandwidths)
 fitted_vals = loo_cv_result$fitted_values
 cv_errors = loo_cv_result$errors
 cv_mse = loo_cv_result$mse
 plot(cv_mse, type = "l")
-optimal_bandwith = which.min(cv_mse)
+optimal_bandwith = bandwidths[which.min(cv_mse)]
 
 # Use optimal bandwith to plot estimate
 y_hat = sapply(x_train, nw_estimator,observed_x = x_train, observed_y = y_train, optimal_bandwith)
@@ -97,7 +103,7 @@ final_temp_data = data.frame(x= x_train, y = y_train, y_hat=y_hat)
 ggplot(final_temp_data, aes(x = x, y = y)) +
   geom_line(color = "blue") +
   geom_line(aes(y = y_hat), color = "red") +
-  labs(title = "Nadaraya-Watson Regression Smoothing",
+  labs(title = "Nadaraya-Watson Regression Smoothing LOO-CV h=1",
        x = "Year",
        y = "Temperature")
 ```
@@ -404,7 +410,7 @@ predicted_profile_lower <- X_i %*% credible_intervals[1, ]
 predicted_profile_upper <- X_i %*% credible_intervals[2, ]
 
 plot(t_j, observed_profile, type = 'b', col = 'red', ylim = c(min(observed_profile, predicted_profile_lower), max(observed_profile, predicted_profile_upper)), ylab = 'z_ij', xlab = 't_j')
-lines(t_j, predicted_profile, type = 'b', col = 'blue')
+lines(t_j, predicted_profile, type = 'b', col = 'black')
 lines(t_j, predicted_profile_lower, type = 'b', col = 'blue', lty = 2)
 lines(t_j, predicted_profile_upper, type = 'b', col = 'blue', lty = 2)
 
