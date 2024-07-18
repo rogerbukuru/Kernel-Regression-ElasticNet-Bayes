@@ -305,8 +305,8 @@ patient_profiles = as.matrix(patient_profiles[1:25,])
 n = 25
 T = 7
 p = 3
-iterations = 300
-burn_in = 10
+iterations = 30000
+burn_in = 10000
 
 
 # Chain Starting values 
@@ -325,7 +325,6 @@ i4 = 0.001
 sigma_e2_chain   = numeric(iterations)
 sigma_phi2_chain = numeric(iterations)
 phi_chain        = array(0, dim=c(n, 4, iterations))
-
 # b(x) design matrix
 b = function (x) { x* log(x) }
 eta_k = c(0.5, 10, 25)
@@ -371,21 +370,32 @@ sigma_phi2_chain <- sigma_phi2_chain[(burn_in+1):iterations]
 phi_chain <- phi_chain[, , (burn_in+1):iterations]
 
 # Convergence diagnostics
-par(mfrow = c(2, 1))
+par(mfrow = c(2, 2), mar = c(2, 2, 2, 1))
 plot(as.mcmc(sigma_e2_chain), main = "Trace Plot for sigma_e2", xlab = "Iteration", ylab = "Value")
 plot(as.mcmc(sigma_phi2_chain), main = "Trace Plot for sigma_phi2", xlab = "Iteration", ylab = "Value")
 
-par(mfrow = c(1, 1))
+
+# Convergence diagnostics for phi parameters
+par(mfrow = c(25, 4), mar = c(2, 2, 2, 1), oma = c(4, 4, 2, 1), cex.main = 0.7)
 for (i in 1:25) {
   for (j in 1:4) {
-    plot(as.mcmc(phi_chain[i, j, ]), main = paste("Trace Plot for phi[", i, ",", j, "]", sep = ""), xlab = "Iteration", ylab = "Value")
+    plot(as.mcmc(phi_chain[i, j, ]), 
+         main = paste("phi[", i, ",", j, "]", sep = ""), 
+         xlab = "Iteration", 
+         ylab = "Value", 
+         col.main = "blue", 
+         cex.main = 0.7)
   }
 }
+par(mfrow = c(1, 1))  # Reset to default
+
 
 
 # Extract posterior means and 95% credible intervals for patient 15
 posterior_means <- apply(phi_chain[15, , ], 1, mean)
 credible_intervals <- apply(phi_chain[15, , ], 1, quantile, probs = c(0.025, 0.975))
+
+#---------------------------------- Analyses of 15th Observed Profile --------------------------------
 
 # Plot the 15th observed profile
 observed_profile <- patient_profiles[15, ]
