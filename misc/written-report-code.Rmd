@@ -1,0 +1,1892 @@
+---
+title: "Predicting default of credit card clients"
+author: "Roger Bukuru"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+      toc: true
+      number_sections: true
+      df_print: kable
+      fig_width: 5
+      fig_height: 5
+      fig_caption: true
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+# Import Data 
+
+```{r, echo = FALSE}
+rm(list = ls())
+library(readxl)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(psych)
+library(keras)
+library(stats)
+library(e1071)
+library(caret)
+library(pROC)
+library(scatterplot3d)
+
+file_path = "./data/default of credit card clients.xls"
+
+credit_default_data = as_tibble(read_xls(file_path))
+
+colnames(credit_default_data) = as.character(credit_default_data[1, ])
+                                
+credit_default_data = credit_default_data[-1,]
+credit_default_data = credit_default_data[,-1]
+
+```
+
+
+# Exploratory Data Analysis
+
+## Describe Data
+
+```{r, table_figure, fig.cap="Table 1: Example Table", echo = FALSE}
+objects_to_keep <- c("credit_default_data")
+rm(list = setdiff(ls(), objects_to_keep))
+
+credit_default_data = credit_default_data %>%
+                      mutate(across(where(is.character), as.numeric))
+credit_default_data_2 = credit_default_data
+#colnames(credit_default_data_summary)
+#summary(credit_default_data)
+stats = describe(credit_default_data, na.rm = FALSE, skew= FALSE,  check=TRUE, omit = TRUE)
+#round(stats,2)
+kable(round(stats,2), caption = "Features Summary Statistics")
+```
+- Education and Marriage have some unreported categories
+
+## Response Variable Distribution
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", "credit_default_data_2")
+rm(list = setdiff(ls(), objects_to_keep))
+response_variable = as.numeric(credit_default_data$`default payment next month`) %>%
+                    as.tibble() %>%
+                    rename(., Class = value)
+
+
+default_yes = response_variable %>%
+              filter(Class == 1)
+
+
+default_no =  response_variable %>%
+              filter(Class == 0)
+
+agg_data = response_variable %>%
+           group_by(Class) %>%
+           summarise(Count = n()) %>%
+           mutate(Percentage = Count /sum(Count) *100)
+
+percentage_yes = nrow(default_yes)/nrow(credit_default_data) *100
+percentage_no = nrow(default_no)/nrow(credit_default_data) *100  
+
+ggplot(agg_data, aes(x = factor(Class, labels = c("No", "Yes")), y = Count, fill = factor(Class, labels = c("No", "Yes")))) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+  labs(x = "Default payment next month", y = "Number of Clients", title = "Class Distribution") +
+  scale_fill_manual(values = c("No" = "darkgreen", "Yes" = "red")) +  # Customize bar colors
+  theme_minimal()+
+  theme(legend.position = "none")  # Remove the legend
+```
+
+
+## Data Cleaning
+
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data","credit_default_data_2")
+rm(list = setdiff(ls(), objects_to_keep))
+
+# Marriage and Education and to other cateogry
+credit_default_data = credit_default_data %>%
+                      rename(PAY_1 = PAY_0)%>% 
+                      rename(DEFAULT_PAYMENT_NEXT_MONTH = `default payment next month`)
+
+marriage_cateogory_codes = c(1,2,3)   # From data description
+education_category_codes = c(1,2,3,4) # From data description
+
+marriage_stats = credit_default_data%>%
+                 group_by(MARRIAGE)%>%
+                 summarise(Total = n())
+
+marriage_stats
+
+education_stats = credit_default_data%>%
+                 group_by(EDUCATION)%>%
+                 summarise(Total = n())
+
+education_stats
+
+# Add unknown category to the 'Other' category for both Marriage and Education 
+credit_default_data  = credit_default_data %>%
+                       mutate(MARRIAGE = if_else(!(MARRIAGE %in% marriage_cateogory_codes), 3, MARRIAGE),
+                       EDUCATION = if_else(!(EDUCATION %in% education_category_codes), 4, EDUCATION)
+                       )
+        
+
+marriage_stats_2 = credit_default_data%>%
+                 group_by(MARRIAGE)%>%
+                 summarise(Total = n())
+
+marriage_stats_2
+
+education_stats_2 = credit_default_data%>%
+                 group_by(EDUCATION)%>%
+                 summarise(Total = n())
+
+education_stats_2
+
+
+# Payment History where value is -2 and -1, aggregate under 0
+
+payment_history = c("PAY_1", "PAY_2", "PAY_3", "PAY_4", "PAY_5","PAY_6")
+
+for (p in payment_history) {
+  indices = which(credit_default_data[,p] < 0)
+  credit_default_data[indices, p] = 0
+}
+```
+
+
+## Data Analysis
+
+```{r, echo = FALSE}
+
+objects_to_keep <- c("credit_default_data","credit_default_data_2" )
+categorical_feature_names = c("SEX", "EDUCATION", "MARRIAGE", "DEFAULT_PAYMENT_NEXT_MONTH")
+credit_default_data = credit_default_data%>%
+                      mutate(across(matches(categorical_feature_names), as.factor))
+
+stats_2 = describe(credit_default_data, na.rm = FALSE, skew= FALSE, omit = TRUE)
+#round(stats,2)
+kable(round(stats_2,2), caption = "Features Summary Statistics")
+
+rm(list = setdiff(ls(), objects_to_keep))
+limit_balances  = credit_default_data |>
+                  drop_na(LIMIT_BAL) |>
+                  select(LIMIT_BAL) |>
+                  as.matrix() |>
+                  as.vector() |>
+                  as.numeric()
+
+
+average_limit_balance = mean(limit_balances)
+range(limit_balances)
+
+male_average_credit_limit = credit_default_data |>
+                            filter(SEX == 1) |>
+                            select(LIMIT_BAL) |>
+                            as.matrix() |>
+                            as.vector() |>
+                            as.numeric() |>
+                            mean()
+
+female_average_credit_limit = credit_default_data |>
+                            filter(SEX == 2) |>
+                            select(LIMIT_BAL) |>
+                            as.matrix() |>
+                            as.vector() |>
+                            as.numeric() |>
+                            mean()
+
+minimum = min(limit_balances)
+first_quantile = quantile(limit_balances, 0.25)
+median_point = quantile(limit_balances, 0.50)
+third_quantile = quantile(limit_balances, 0.75)
+maximum = max(limit_balances)
+
+ggplot(credit_default_data, aes(x="", y=limit_balances)) +
+  geom_boxplot(fill="lightblue", color="black") +
+  labs(title="Credit Limit Five Number Summary", x="", y="Credit Limit") +
+  theme_minimal()
+
+
+# Credit Spending
+credit_spending = credit_default_data %>%
+                  select(LIMIT_BAL, BILL_AMT1) %>%
+                  mutate(across(everything(), as.numeric)) %>%
+                  mutate(`Credit Utilization` = BILL_AMT1) %>%
+                  ungroup()
+credit_spending = credit_spending %>%
+                  mutate(`Percentage Utilized`= round((`Credit Utilization`/LIMIT_BAL)*100,2))
+
+
+ggplot(credit_spending, aes(x = `Percentage Utilized`)) +
+  geom_histogram(aes(y=..density..),binwidth = 5, # Adjust binwidth based on your data's distribution and scale
+                 fill = "steelblue", color = "black") +
+  xlim(0, 200)+
+  labs(title = "Distribution of Credit Utilization",
+       x = "Credit Utilization (%)",
+       y = "# of Customers") +
+  theme_minimal() 
+```
+
+
+
+## Correlation Analysis
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data",
+                     "credit_default_data_2",
+                     "training_data",
+                     "validation_data",
+                     "testing_data",
+                     "train_X_continous",
+                     "validation_X_continous",
+                     "test_X_continous",
+                     "mu_x_continous",
+                     "sigma_x_continous"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+library(corrplot)
+
+#summary(X_categorical)
+
+# corr_matrix = cor(train_X_continous)
+# col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+# corrplot(corr_matrix, method = "color", col = col(200), 
+#          type = "full", order = "original", 
+#          addCoef.col = "white",
+#          tl.col = "black", tl.srt = 45,
+#          tl.pos = "lt",
+#          tl.cex = 0.6, cl.cex = 0.7,
+#          number.cex = 0.5
+#          )
+
+# Standardize Data
+
+X_continous = credit_default_data%>%
+              select(where(is.numeric)) %>%
+              mutate(DEFAULT = as.numeric(as.matrix(credit_default_data[, 24])))
+              
+corr_matrix = cor(as.matrix(X_continous))
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(corr_matrix, method = "color", col = col(200),
+        type = "full", order = "original",
+        addCoef.col = "white",
+        tl.col = "black", tl.srt = 45,
+       tl.pos = "lt",
+       tl.cex = 0.6, cl.cex = 0.7,
+        number.cex = 0.5
+       )
+```
+
+We observe from the correlation matrix, that some features have high correlations with each other
+
+- BILL_AMT1 and BILL_AMT2 have  p = 0.95
+- BILL_AMT2 and BILL_AMT3 have  p = 0.92
+- BILL_AMT4 and BILL_AMT5 have  p = 0.94
+
+
+
+# Data Preprocessing
+
+
+## One-Hot Encoding
+
+```{r, echo = FALSE}
+library(caret)
+
+dummies = dummyVars("~.", data = credit_default_data[, -24], fullRank = FALSE)
+
+data_transformed <- predict(dummies, newdata = credit_default_data[, -24])%>%as.tibble()
+data_transformed$DEFAULT_PAYMENT_NEXT_MONTH = as.factor(as.vector(as.matrix(credit_default_data[, 24])))
+credit_default_data = data_transformed%>%
+                      select(-SEX.2, -EDUCATION.4, -MARRIAGE.3) # Remove columns to ensure full rank
+
+```
+
+## Dataset Partition
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", "X_continous")
+rm(list = setdiff(ls(), objects_to_keep))
+#summary(credit_default_data)
+
+# Split Data
+set.seed(10032024)
+dataSize = nrow(credit_default_data)
+trainingSize = floor(0.80*dataSize)
+
+
+
+trainingDataIndices = sample(seq_len(dataSize), size = trainingSize)
+training_data = credit_default_data[trainingDataIndices,]
+testing_data  = credit_default_data[-trainingDataIndices,]
+
+# Class Distribution of Train and Test Data Set
+
+training_data_response = training_data%>%
+                         select(DEFAULT_PAYMENT_NEXT_MONTH)
+
+training_data_defaulters = training_data_response %>%
+                           filter(DEFAULT_PAYMENT_NEXT_MONTH == 1)
+
+training_data_non_defaulters = training_data_response %>%
+                               filter(DEFAULT_PAYMENT_NEXT_MONTH == 0)
+
+training_data_agg = training_data_response %>%
+                   group_by(DEFAULT_PAYMENT_NEXT_MONTH) %>%
+                   summarise(Count = n()) %>%
+                   mutate(Percentage = Count /sum(Count) *100)
+
+
+ggplot(training_data_agg, aes(x = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")), y = Count, fill = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")))) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+  labs(x = "Default payment next month", y = "Number of Clients", title = "Training Data Class Distribution") +
+  scale_fill_manual(values = c("No" = "darkgreen", "Yes" = "red")) +  # Customize bar colors
+  theme_minimal()+
+  theme(legend.position = "none")  # Remove the legend
+
+
+
+testing_data_response = testing_data%>%
+                        select(DEFAULT_PAYMENT_NEXT_MONTH)
+
+testing_data_defaulters = testing_data_response %>%
+                           filter(DEFAULT_PAYMENT_NEXT_MONTH == 1)
+
+testing_data_non_defaulters = testing_data_response %>%
+                               filter(DEFAULT_PAYMENT_NEXT_MONTH == 0)
+
+testing_data_agg = testing_data_response %>%
+                   group_by(DEFAULT_PAYMENT_NEXT_MONTH) %>%
+                   summarise(Count = n()) %>%
+                   mutate(Percentage = Count /sum(Count) *100)
+
+
+ggplot(testing_data_agg, aes(x = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")), y = Count, fill = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")))) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+  labs(x = "Default payment next month", y = "Number of Clients", title = "Testing Data Class Distribution") +
+  scale_fill_manual(values = c("No" = "darkgreen", "Yes" = "red")) +  # Customize bar colors
+  theme_minimal()+
+  theme(legend.position = "none")  # Remove the legend
+
+training_data_total_defaulters = nrow(training_data_defaulters)
+training_data_total_non_defaulters = nrow(training_data_non_defaulters)
+
+testing_data_total_defaulters = nrow(testing_data_defaulters)
+testing_data_total_non_defaulters = nrow(testing_data_non_defaulters)
+                                
+```
+
+## Feature Scaling
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", "training_data", "testing_data")
+rm(list = setdiff(ls(), objects_to_keep))
+# Standardization
+training_data_x = training_data[, -27]
+
+mu_training_data = apply(training_data_x, 2, mean)
+sigma_training_data = apply(training_data_x, 2, sd)
+
+training_data_x_std = as.matrix(apply(training_data_x, 2, function(training_data_x)((training_data_x - mean(training_data_x))/sd(training_data_x))) %>% as.tibble())
+
+testing_data_x = testing_data[, -27]
+
+mu_testing_data = apply(testing_data_x, 2, mean)
+sigma_testing_data = apply(testing_data_x, 2, sd)
+
+testing_data_x_std = as.matrix(apply(testing_data_x, 2, function(testing_data_x)((testing_data_x - mean(testing_data_x))/sd(testing_data_x))))%>%as_tibble()
+
+```
+
+
+
+## Resampling
+
+#### Oversampling
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+#library(smotefamily)
+#install.packages(c("zoo","xts","quantmod", "ROCR")) ## and perhaps mode
+
+#install.packages("https://cran.r-project.org/src/contrib/Archive/DMwR/DMwR_0.4.1.tar.gz", repos=NULL, type="source")
+library(DMwR)
+
+# Assume your target variable is binary and the minority class is "1"
+#result <- SMOTE(form = target_variable ~ ., dat = your_data, perc.over = 100, k = 5)
+
+training_data_smote <- SMOTE(DEFAULT_PAYMENT_NEXT_MONTH ~ ., data = as.data.frame(training_data), perc.over = 200, k = 5)
+
+training_data_response_smote = training_data_smote%>%
+                              select(DEFAULT_PAYMENT_NEXT_MONTH)
+
+training_data_defaulters_smote = training_data_response_smote %>%
+                           filter(DEFAULT_PAYMENT_NEXT_MONTH == 1)
+
+training_data_non_defaulters_smote = training_data_response_smote %>%
+                               filter(DEFAULT_PAYMENT_NEXT_MONTH == 0)
+
+training_data_agg_smote = training_data_response_smote %>%
+                   group_by(DEFAULT_PAYMENT_NEXT_MONTH) %>%
+                   summarise(Count = n()) %>%
+                   mutate(Percentage = Count /sum(Count) *100)
+
+
+ggplot(training_data_agg_smote, aes(x = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")), y = Count, fill = factor(DEFAULT_PAYMENT_NEXT_MONTH, labels = c("No", "Yes")))) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+  labs(x = "Default payment next month", y = "Number of Clients", title = "Training Data Class Distribution after SMOTE") +
+  scale_fill_manual(values = c("No" = "darkgreen", "Yes" = "red")) +  # Customize bar colors
+  theme_minimal()+
+  theme(legend.position = "none")  # Remove the legend
+
+
+training_data_x_smote = training_data_smote[, -27]
+
+mu_training_data_smote = apply(training_data_x_smote, 2, mean)
+sigma_training_data_smote = apply(training_data_x_smote, 2, sd)
+
+training_data_x_std_smote = as.matrix(apply(training_data_x_smote, 2, function(training_data_x_smote)((training_data_x_smote - mean(training_data_x_smote))/sd(training_data_x_smote))) %>% as.tibble())
+```
+
+# Feature Engineering
+
+## Feature Extraction
+
+### Principal Component Analysis
+
+```{r, echo= FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+library(ggplot2)
+library(scatterplot3d)
+library(plotly)
+  
+sigma_matrix   = cov(training_data_x_std_smote)
+eigen_decomp   = eigen(sigma_matrix)
+
+eigenvalues   = eigen_decomp$values 
+eigenvectors  = as.matrix(eigen_decomp$vectors)
+colnames(eigenvectors) = paste("PC", 1:nrow(sigma_matrix), sep = "")
+
+
+total_variance = sum(eigenvalues)
+variance_explained = eigenvalues/total_variance
+pca_data = data.frame(PCA = 1:nrow(sigma_matrix), `Variance Explained` = variance_explained)
+
+# Scree Plot
+
+ggplot(pca_data, mapping = aes(x = PCA, y = Variance.Explained)) +
+      geom_point() +
+      geom_line()+
+      labs(x = "Principal Components", y = "Variance Explained", title = "PCA Scree Plot")+
+      theme_minimal()
+     
+
+# Suggest that the first 4 PCA
+var_first_11 = sum(variance_explained[1:13])
+
+variance_explained
+
+pca_scores =  t(tcrossprod(eigenvectors, training_data_x_std_smote)) %>% as.tibble()
+colnames(pca_scores) = colnames(eigenvectors)
+
+```
+
+
+### Autoencoders
+
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+
+train_autoencoder = function(epochs = 100, code_size = 1, x_train) {
+  
+total_features = ncol(x_train)
+input_layer = layer_input(shape = c(total_features))
+
+encoder = 
+  input_layer %>%
+  layer_dense(units = total_features/2, activation = "tanh") %>%# encoder layer 1
+  #layer_batch_normalization() %>%  # Batch normalization layer to normalize the activations of the input layer
+  #layer_dropout(rate = 0.1) %>%  #Dropout layer to prevent overfitting by randomly dropping 10% of the input units.
+  #layer_dense(units = total_features/2, activation = "relu") %>%#Hidden layer 2
+  layer_dense(units = code_size) # Botteneck layer/ Laten Layer
+  
+decoder = 
+  encoder %>%
+  layer_dense(units = total_features/2 , activation = "tanh") %>% # Decoder Layer 1
+  #layer_dropout(rate = 0.1) %>%  #Dropout layer to prevent overfitting by randomly dropping 10% of the input units.
+  #layer_dense(units = 15, activation = "relu") %>%#Hidden layer 2
+  layer_dense(units = total_features) # Reconstructed/Output layer
+
+  
+autoencoder_model = keras_model(inputs = input_layer, outputs = decoder)  
+autoencoder_model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+summary(autoencoder_model)
+
+  auto_associative =
+  autoencoder_model %>%
+  fit(as.matrix(x_train), 
+             as.matrix(x_train),
+             epochs = epochs,
+             batch_size = 256,
+             shuffle = TRUE,
+             validation_split = 0.2
+             #validation_data = list(as.matrix(validation_X_continous_std), as.matrix(validation_X_continous_std))
+             )
+  plot(auto_associative)
+  return(list(autoencoder_model = autoencoder_model, input_layer = input_layer, encoder = encoder))
+}
+
+autoencoder_mse = rep(NA, 5)
+
+autoencoder_result <- lapply(1:12, function(x) list(autoencoder_model = NA, input_layer = NA, encoder = NA))
+for(k in 1:1){
+  train_aem = train_autoencoder(epochs = 100, code_size = 12, training_data_x_std_smote)
+  autoencoder_stats = evaluate(train_aem$autoencoder_model,
+                               as.matrix(training_data_x_std_smote),
+                               as.matrix(training_data_x_std_smote))
+  autoencoder_mse[12] = autoencoder_stats["loss"]
+  autoencoder_result[[12]]$autoencoder_model = train_aem$autoencoder_model
+  autoencoder_result[[12]]$input_layer = train_aem$input_layer
+  autoencoder_result[[12]]$encoder = train_aem$encoder
+}
+autoencoder_mse
+
+```
+
+
+### Variational Autoencoders
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "autoencoder_result"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+sampling_layer <- new_layer_class(
+  classname = "SamplingLayer",
+  initialize = function(latent_dim) {
+    super()$`__init__`()
+    self$latent_dim <- as.integer(latent_dim)
+    self$epsilon <- k_random_normal(shape = c(1, latent_dim), mean = 0, stddev = 1)  # Pre-generate noise
+  },
+  call = function(self, inputs) {
+    z_mean <- inputs[[1]]
+    z_log_var <- inputs[[2]]
+    z = z_mean + k_exp(z_log_var / 2) * self$epsilon
+    
+    kl_loss <- -0.5 * k_sum(1 + z_log_var - k_square(z_mean) - k_exp(z_log_var), axis = -1)
+    kl_loss <- k_mean(kl_loss) # Take the mean of the KL divergence loss
+    self$add_loss(kl_loss)
+    
+    return(z)
+  }
+)
+
+variational_autoencoder = function(latent_space_dim,batch_size, x_train, epochs, num_clusters){
+  
+total_features = ncol(x_train)
+input_layer = layer_input(shape = c(total_features), name="inputLayer")
+
+encoder_inputs = 
+  input_layer %>%
+  layer_dense(units = total_features/2, activation = "tanh", name = "encoderHiddenL1")#Hidden layer 1
+
+
+# Latent Space
+z_mean = encoder_inputs %>% layer_dense(units = latent_space_dim, name = "z_mean")
+z_log_var = encoder_inputs %>% layer_dense(units = latent_space_dim, name= "z_log_var")
+
+sampling <- sampling_layer(latent_dim = latent_space_dim)
+z <- sampling(list(z_mean, z_log_var))
+
+encoder = keras_model(inputs = input_layer, outputs = list(z_mean, z_log_var,z), name = "encoder")
+summary(encoder)
+
+
+decoder_hidden_l1 = layer_dense(units = total_features/2 , activation = "tanh", name="decoderHiddenL1") #Hidden layer 1
+decoder_output = layer_dense(units = total_features, activation = "tanh", name = "decoderOutput") # Reconstructed/Output layer
+
+sample_decode_h_l1 = decoder_hidden_l1(z)
+sample_final_decode = decoder_output(sample_decode_h_l1)
+vae_model = keras_model(inputs = input_layer, outputs = sample_final_decode, name = "vae_model")
+summary(vae_model)
+
+vae_loss = function(x, vae_output){
+  reconstruction_loss <- k_mean(k_square(x - vae_output), axis = -1) * latent_space_dim
+  kl_loss <- -0.5 * k_sum(1 + z_log_var - k_square(z_mean) - k_exp(z_log_var), axis = -1)
+  k_mean(reconstruction_loss + kl_loss)
+}
+
+# Custom loss function
+ reconstruction_loss <- function(x, vae_output) {
+    k_mean(k_square(x - vae_output), axis = -1)
+  }
+
+vae_model %>% compile(loss = reconstruction_loss, optimizer = "adam", metrics = c("accuracy", "mse"))
+
+
+vae = vae_model %>% fit(x_train, x_train,
+            epochs = epochs, batch_size = batch_size,
+            validation_split = 0.2
+            #validation_data = list(as.matrix(x_validation), as.matrix(x_validation))
+            )
+plot(vae)
+return(list(vae_model = vae_model, input_layer = input_layer, z = z))
+}
+
+
+vae_mse = rep(NA, 5)
+vae_result <- lapply(1:12, function(x) list(vae_model = NA, input_layer = NA, z = NA))
+
+for(k in 1:1){
+ train_vae_model = variational_autoencoder(
+                        latent_space_dim = 12,
+                        batch_size = 256,
+                        x_train = as.matrix(training_data_x_std_smote),
+                        epochs = 100
+                        )
+ vae_stats = evaluate(
+   train_vae_model$vae_model,
+   as.matrix(training_data_x_std_smote),
+   as.matrix(training_data_x_std_smote)
+   )
+ vae_mse[12] = vae_stats["loss"]
+ vae_result[[12]]$vae_model = train_vae_model$vae_model
+ vae_result[[12]]$input_layer = train_vae_model$input_layer
+ vae_result[[12]]$z = train_vae_model$z
+}
+
+vae_mse
+
+```
+
+
+### Technique evaluation
+
+```{r, echo=FALSE}
+
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+pca_stats = function(pca, x, x_std, mu_x, sigma_x, k){
+x_projected =  x_std%*%pca[, 1:k]%>%as.tibble()
+#x_projected_og_scale = sweep(x_projected,2,sigma_x, "*")
+#x_projected_og_scale = sweep(x_projected,2,mu_x, "+")
+mse = mean(as.matrix((as.matrix(x_std)-x_projected)^2))
+return(list(x = x_projected, mse = mse))
+}
+
+pca_mse = rep(NA, 20)
+for(k in 1:26){
+ pca_mse[k] = pca_stats(eigenvectors,training_data_x_std_smote, training_data_x_std_smote, mu_training_data_smote,     sigma_training_data_smote, k)$mse
+
+}
+
+
+
+df <- data.frame(k = c(1:26, 1:12, 1:12), mse = c(pca_mse, autoencoder_mse, vae_mse), method = c(rep("PCA", 26), rep("Autoencoder", 12),rep("VAE", 12)))
+ggplot(df, aes(x = k, y = mse, col = method))+ 
+  geom_line()+
+  labs(x = "Latent Space Dimension (k)", y = "MSE", title = "Dimension Reduction Techniques MSE")+
+  theme_minimal()
+
+pca_mse
+autoencoder_mse
+vae_mse
+```
+
+
+# Customer Segements
+
+## PCA+K-Means Customer Segments
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+# Determine optimal number of clusters using Elbow Method
+set.seed(10032024)
+wcss_pca <- numeric()
+for (i in 1:10) {
+  kmeans_result_pca <- kmeans(pca_scores[,13], centers = i, nstart = 25)
+  wcss_pca[i] <- kmeans_result_pca$tot.withinss
+}
+
+# # Plotting the Elbow Plot
+# plot(1:10, wcss, type = "b", xlab = "Number of Clusters", ylab = "WCSS",
+#      main = "Elbow Method for Determining Optimal Number of Clusters")
+
+wcss_df_pca <- data.frame(Clusters = 1:10, WCSS = wcss_pca)
+
+ggplot(wcss_df_pca, aes(x = Clusters, y = WCSS)) +
+  geom_line() + 
+  geom_point() +
+  scale_x_continuous(breaks = 1:10) + # Ensure integer scale for clusters
+  theme_minimal() +
+  labs(title = "Elbow Method for Determining Optimal Number of Clusters - PCA",
+       x = "Number of Clusters",
+       y = "Within-Cluster Sum of Squares (WCSS)")
+
+# From the elbow we choose 3 clusters.
+
+kmeans_result_pca <- kmeans(pca_scores[,13], centers = 3, nstart = 25)
+
+cluster_colors_pca <- c("#0799BC", "#F98524", "#F1EA81")  # Specify colors for each cluster
+point_colors_pca <- cluster_colors_pca[kmeans_result_pca$cluster]
+s3d_pca = scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3, main = "Principal Components 3D Embedding of K-Means Clusters",
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", pch = 19, color = point_colors_pca, cex.axis = 0.5)
+legend_position <- s3d_pca$xyz.convert(8, 1.0, -14.0)
+
+# Assuming you have a way to relate cluster numbers to descriptive labels
+cluster_labels <- paste("Cluster", 1:length(cluster_colors_pca))
+# Add the legend
+legend(legend_position$x, legend_position$y, legend = cluster_labels, 
+       col = cluster_colors_pca, pch = 19)
+
+
+credit_data_pca_segmentation <- training_data_smote %>%
+  mutate(
+    # Calculate credit utilization
+    Avg_Utilization = rowMeans(select(., starts_with("BILL_AMT")) / LIMIT_BAL),
+    # Count the number of late payments
+    Num_Late_Payments = select(., starts_with("PAY_")) %>% apply(1, function(x) sum(x > 0)),
+    # Determine risk level
+    Risk_Level = case_when(
+      Num_Late_Payments == 0 & Avg_Utilization <= 0.30 ~ "Low Risk",
+      Num_Late_Payments <= 2 & Avg_Utilization > 0.30 & Avg_Utilization <= 0.75 ~ "Medium Risk",
+      TRUE ~ "High Risk"
+    ),
+    # Add the cluster assignments
+    Cluster = as.factor(kmeans_result_pca$cluster) # This should be the cluster assignments from your k-means clustering
+  )
+
+credit_data_pca_segmentation$Risk_Level <- factor(credit_data_pca_segmentation$Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))
+
+cluster_risk_summary_pca <- credit_data_pca_segmentation %>%
+  group_by(Cluster, Risk_Level) %>%
+  summarise(
+    Count = n(),
+    Avg_Credit_Limit = mean(LIMIT_BAL, na.rm = TRUE),
+    Avg_Utilization = mean(Avg_Utilization, na.rm = TRUE),
+    Avg_Late_Payments = mean(Num_Late_Payments, na.rm = TRUE)
+  )
+
+
+
+risk_level_summary_pca <- credit_data_pca_segmentation %>%
+  count(Cluster, Risk_Level) %>%
+  mutate(Risk_Level = factor(Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))) %>%
+  arrange(Cluster, desc(Risk_Level)) # Ensure the order is High, Medium, Low
+
+risk_colors <- c("High Risk" = "red", "Medium Risk" = "#F98524", "Low Risk" = "darkgreen")
+
+# Plot using ggplot2
+ggplot(risk_level_summary_pca, aes(x = Cluster, y = n, fill = Risk_Level)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Credit Default Risk Segments within Each Cluster - PCA",
+       x = "Cluster",
+       y = "No of customers",
+       fill = "Credit Default Risk Segment") +
+scale_fill_manual(values=risk_colors)
+
+
+```
+
+
+## Autoencoders+K-Means Customer Segments
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+ae_encoded_points = function(autoencoder_model, input_layer, encoder, code_size = 1, x_train){
+  
+autoencoder_weights = 
+  autoencoder_model %>%
+  get_weights()
+
+file_name = paste("autoencoder_weights", code_size, sep = "-")
+save_model_weights_hdf5(object = autoencoder_model,filepath = paste0("./data/", file_name, ".hdf5"),overwrite = TRUE)
+
+encoder_model <- keras_model(inputs = input_layer, outputs = encoder)
+
+encoder_model %>% load_model_weights_hdf5(filepath = paste0("./data/", file_name, ".hdf5"),skip_mismatch = TRUE,by_name = TRUE)
+
+encoder_model %>% compile(
+  loss='mean_squared_error',
+  optimizer='adam',
+  metrics = c('accuracy')
+)
+
+encoded_points = encoder_model %>%
+                  predict_on_batch(x = as.matrix(x_train)) %>%
+                  as.tibble()
+return(encoded_points)
+}
+
+encoded_points_ae = ae_encoded_points(
+  autoencoder_result[[12]]$autoencoder_model,
+  autoencoder_result[[12]]$input_layer,
+  autoencoder_result[[12]]$encoder,
+  code_size = 12,
+  training_data_x_std_smote)
+
+# Determine optimal number of clusters using Elbow Method
+set.seed(10032024)
+wcss_ae <- numeric()
+for (i in 1:10) {
+  kmeans_result_ae <- kmeans(encoded_points_ae, centers = i, nstart = 25)
+  wcss_ae[i] <- kmeans_result_ae$tot.withinss
+}
+
+# # Plotting the Elbow Plot
+# plot(1:10, wcss, type = "b", xlab = "Number of Clusters", ylab = "WCSS",
+#      main = "Elbow Method for Determining Optimal Number of Clusters")
+
+wcss_df_ae <- data.frame(Clusters = 1:10, WCSS = wcss_ae)
+
+ggplot(wcss_df_ae, aes(x = Clusters, y = WCSS)) +
+  geom_line() + 
+  geom_point() +
+  scale_x_continuous(breaks = 1:10) + # Ensure integer scale for clusters
+  theme_minimal() +
+  labs(title = "Elbow Method for Determining Optimal Number of Clusters - Autoencoder",
+       x = "Number of Clusters",
+       y = "Within-Cluster Sum of Squares (WCSS)")
+
+# From the elbow we choose 3 clusters.
+
+kmeans_result_ae <- kmeans(encoded_points_ae, centers = 2, nstart = 25)
+
+
+ cluster_colors_ae <- c("#0799BC", "#F98524")#, "#F1EA81")#, "#222222")  # Specify colors for each cluster
+ point_colors_ae <- cluster_colors_ae[kmeans_result_ae$cluster]
+ 
+ s3d_ae = scatterplot3d(x = encoded_points_ae$V1, y = encoded_points_ae$V2, z = encoded_points_ae$V3, main = "Autoencoder 3D Embedding of K-Means Clusters", xlab = "Dim 1", ylab = "Dim 2", zlab = "Dim 3", pch = 19, color = point_colors_ae, cex.axis = 0.5)
+# Add a legend
+# Adjust the position based on your plot's scale
+legend_position <- s3d_ae$xyz.convert(3.5, -1.0, 0.0)
+
+# Assuming you have a way to relate cluster numbers to descriptive labels
+cluster_labels <- paste("Cluster", 1:length(cluster_colors_ae))
+
+# Add the legend
+legend(legend_position$x, legend_position$y, legend = cluster_labels, 
+       col = cluster_colors_ae, pch = 19)
+
+
+# library(plotly)
+# 
+# # Assuming 'encoded_points' is your data frame and 'point_colors_ae' are the colors assigned to each point based on cluster
+# # Create a 3D scatter plot using plotly
+# plot_ly(data = encoded_points, x = ~V1, y = ~V2, z = ~V3, type = 'scatter3d', mode = 'markers',
+#         marker = list(size = 5, color = point_colors_ae)) %>%
+#   layout(title = "Autoencoder 3D Embedding",
+#          scene = list(xaxis = list(title = "Dim 1"),
+#                       yaxis = list(title = "Dim 2"),
+#                       zaxis = list(title = "Dim 3")),
+#          legend = list(title = list(text = "Clusters")))
+
+
+ 
+ credit_data_ae_segmentation <- training_data_smote %>%
+  mutate(
+    # Calculate credit utilization
+    Avg_Utilization = rowMeans(select(., starts_with("BILL_AMT")) / LIMIT_BAL),
+    # Count the number of late payments
+    Num_Late_Payments = select(., starts_with("PAY_")) %>% apply(1, function(x) sum(x > 0)),
+    # Determine risk level
+    Risk_Level = case_when(
+      Num_Late_Payments == 0 & Avg_Utilization <= 0.30 ~ "Low Risk",
+      Num_Late_Payments <= 2 & Avg_Utilization > 0.30 & Avg_Utilization <= 0.75 ~ "Medium Risk",
+      TRUE ~ "High Risk"
+    ),
+    # Add the cluster assignments
+    Cluster = as.factor(kmeans_result_ae$cluster) # This should be the cluster assignments from your k-means clustering
+  )
+
+credit_data_ae_segmentation$Risk_Level <- factor(credit_data_ae_segmentation$Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))
+
+cluster_risk_summary_ae <- credit_data_ae_segmentation %>%
+  group_by(Cluster, Risk_Level) %>%
+  summarise(
+    Count = n(),
+    Avg_Credit_Limit = mean(LIMIT_BAL, na.rm = TRUE),
+    Avg_Utilization = mean(Avg_Utilization, na.rm = TRUE),
+    Avg_Late_Payments = mean(Num_Late_Payments, na.rm = TRUE)
+  )
+
+
+
+risk_level_summary_ae <- credit_data_ae_segmentation %>%
+  count(Cluster, Risk_Level) %>%
+  mutate(Risk_Level = factor(Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))) %>%
+  arrange(Cluster, desc(Risk_Level)) # Ensure the order is High, Medium, Low
+
+risk_colors <- c("High Risk" = "red", "Medium Risk" = "#F98524", "Low Risk" = "darkgreen")
+
+# Plot using ggplot2
+ggplot(risk_level_summary_ae, aes(x = Cluster, y = n, fill = Risk_Level)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Credit Default Risk Segments within Each Cluster - Autoencoder",
+       x = "Cluster",
+       y = "No of customers",
+       fill = "Credit Default Risk Segment") +
+     scale_fill_manual(values = risk_colors)
+
+```
+
+
+##Variational Autoencoder+K-Means Customer Segments
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "ae_encoded_points",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+vae_encoded_points = function(vae_model,input_layer, z, latent_space_dim, x_train){
+  
+  vae_weights = 
+  vae_model %>%
+  get_weights()
+  
+  file_name = paste("vae_weights", latent_space_dim, sep = "-")
+  save_model_weights_hdf5(object = vae_model,filepath = paste0("./data/", file_name, ".hdf5"),overwrite = TRUE)
+  
+  encoder_model   = keras_model(inputs = input_layer, outputs = z, name = "encoder_model")
+  encoder_model %>% load_model_weights_hdf5(filepath = paste0("./data/", file_name, ".hdf5"),skip_mismatch = TRUE,by_name = TRUE)
+  
+  encoded_points = predict(encoder_model, x_train)%>% as.tibble()
+  return(encoded_points)
+  
+}
+
+encoded_points_vae = vae_encoded_points(
+  vae_result[[12]]$vae_model,
+  vae_result[[12]]$input_layer,
+  vae_result[[12]]$z,
+  latent_space_dim = 12,
+  training_data_x_std_smote)
+
+# Determine optimal number of clusters using Elbow Method
+set.seed(10032024)
+wcss_vae <- numeric()
+for (i in 1:10) {
+  kmeans_result_vae <- kmeans(encoded_points_vae, centers = i, nstart = 25)
+  wcss_vae[i] <- kmeans_result_vae$tot.withinss
+}
+
+
+
+wcss_df_vae <- data.frame(Clusters = 1:10, WCSS = wcss_vae)
+
+ggplot(wcss_df_vae, aes(x = Clusters, y = WCSS)) +
+  geom_line() + 
+  geom_point() +
+  scale_x_continuous(breaks = 1:10) + # Ensure integer scale for clusters
+  theme_minimal() +
+  labs(title = "Elbow Method for Determining Optimal Number of Clusters - Variational Autoencoder",
+       x = "Number of Clusters",
+       y = "Within-Cluster Sum of Squares (WCSS)")
+
+# From the elbow we choose 3 clusters.
+
+kmeans_result_vae <- kmeans(encoded_points_vae, centers = 3, nstart = 25)
+
+
+ cluster_colors_vae <- c("#0799BC", "#F98524", "#F1EA81")  # Specify colors for each cluster
+ point_colors_vae <- cluster_colors_vae[kmeans_result_vae$cluster]
+ 
+ s3d_vae = scatterplot3d(x = encoded_points_vae$V1, y = encoded_points_vae$V2, z = encoded_points_vae$V3, main = "Variational Autoencoder 3D Embedding of K-Means Clusters", xlab = "Dim 1", ylab = "Dim 2", zlab = "Dim 3", pch = 19, color = point_colors_vae, cex.axis = 0.5)
+# Add a legend
+# Adjust the position based on your plot's scale
+legend_position <- s3d_vae$xyz.convert(-0.05, 0.2, 0.15)
+
+# Assuming you have a way to relate cluster numbers to descriptive labels
+cluster_labels <- paste("Cluster", 1:length(cluster_colors_vae))
+
+# Add the legend
+legend(legend_position$x, legend_position$y, legend = cluster_labels, 
+       col = cluster_colors_vae, pch = 19)
+
+
+# library(plotly)
+# 
+# # Assuming 'encoded_points' is your data frame and 'point_colors_ae' are the colors assigned to each point based on cluster
+# # Create a 3D scatter plot using plotly
+# plot_ly(data = encoded_points, x = ~V1, y = ~V2, z = ~V3, type = 'scatter3d', mode = 'markers',
+#         marker = list(size = 5, color = point_colors_ae)) %>%
+#   layout(title = "Autoencoder 3D Embedding",
+#          scene = list(xaxis = list(title = "Dim 1"),
+#                       yaxis = list(title = "Dim 2"),
+#                       zaxis = list(title = "Dim 3")),
+#          legend = list(title = list(text = "Clusters")))
+
+
+ 
+credit_data_vae_segmentation <- training_data_smote %>%
+mutate(
+  # Calculate credit utilization
+  Avg_Utilization = rowMeans(select(., starts_with("BILL_AMT")) / LIMIT_BAL),
+  # Count the number of late payments
+  Num_Late_Payments = select(., starts_with("PAY_")) %>% apply(1, function(x) sum(x > 0)),
+  # Determine risk level
+  Risk_Level = case_when(
+    Num_Late_Payments == 0 & Avg_Utilization <= 0.30 ~ "Low Risk",
+    Num_Late_Payments <= 2 & Avg_Utilization > 0.30 & Avg_Utilization <= 0.75 ~ "Medium Risk",
+    TRUE ~ "High Risk"
+  ),
+  # Add the cluster assignments
+  Cluster = as.factor(kmeans_result_vae$cluster) # This should be the cluster assignments from your k-means clustering
+)
+
+credit_data_vae_segmentation$Risk_Level <- factor(credit_data_vae_segmentation$Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))
+
+cluster_risk_summary_vae <- credit_data_vae_segmentation %>%
+  group_by(Cluster, Risk_Level) %>%
+  summarise(
+    Count = n(),
+    Avg_Credit_Limit = mean(LIMIT_BAL, na.rm = TRUE),
+    Avg_Utilization = mean(Avg_Utilization, na.rm = TRUE),
+    Avg_Late_Payments = mean(Num_Late_Payments, na.rm = TRUE)
+  )
+
+
+
+risk_level_summary_vae <- credit_data_vae_segmentation %>%
+  count(Cluster, Risk_Level) %>%
+  mutate(Risk_Level = factor(Risk_Level, levels = c("High Risk", "Medium Risk", "Low Risk"))) %>%
+  arrange(Cluster, desc(Risk_Level)) # Ensure the order is High, Medium, Low
+
+risk_colors <- c("High Risk" = "red", "Medium Risk" = "#F98524", "Low Risk" = "darkgreen")
+
+# Plot using ggplot2
+ggplot(risk_level_summary_vae, aes(x = Cluster, y = n, fill = Risk_Level)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Credit Default Risk Segments within Each Cluster - Variational Autoencoder",
+       x = "Cluster",
+       y = "No of customers",
+       fill = "Credit Default Risk Segment") +
+  scale_fill_manual(values = risk_colors) # Use custom colors
+
+```
+
+
+# Predicting Credit Card Defaults
+
+
+## Support Vector Machines
+
+### SVM with PCA
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "training_encoded_points_vae_12D",
+                     "testing_encoded_points_vae_12D"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+# tune_range_pca <- list(gamma = 2^(seq(-15, 3, by = 2)), cost = 100^(seq(-5, 15, by = 2)))
+# 
+# tune_result_pca <- tune("svm", 
+#                         train.x = pca_scores[,13], 
+#                         train.y = training_data_smote$DEFAULT_PAYMENT_NEXT_MONTH,
+#                         kernel = "radial",
+#                         ranges = tune_range_pca,
+#                         cross = 5
+#                     )
+# 
+# # View the best parameters
+# best_C_pca <- tune_result_pca$best.parameters$C
+# best_gamma_pca <- tune_result_pca$best.parameters$gamma
+# cat("Best C:", best_C_pca, "\n")
+# cat("Best Gamma:", best_gamma_pca, "\n")
+
+
+svm_model_pca = svm(
+    x = pca_scores[,13], 
+    y = training_data_smote$DEFAULT_PAYMENT_NEXT_MONTH,
+    type = "C-classification",
+    kernel = "radial",
+    cost = 100,
+    gamma = 0.1,
+    scale = FALSE,
+    )
+
+summary(svm_model_pca)
+
+test_data_sigma_matrix   = cov(testing_data_x_std)
+test_data_eigen_decomp   = eigen(test_data_sigma_matrix)
+
+test_data_eigenvalues   = test_data_eigen_decomp$values 
+test_data_eigenvectors  = as.matrix(test_data_eigen_decomp$vectors)
+
+test_data_pca_scores =  t(tcrossprod(test_data_eigenvectors, as.matrix(testing_data_x_std))) %>% as.tibble()
+
+svm_test_predict_pca = predict(svm_model_pca, test_data_pca_scores[,13])
+```
+
+## SVM with Autoencoders
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "test_data_pca_scores"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+training_encoded_points_ae_12D = ae_encoded_points(
+  autoencoder_result[[12]]$autoencoder_model,
+  autoencoder_result[[12]]$input_layer,
+  autoencoder_result[[12]]$encoder,
+  code_size = 12,
+  training_data_x_std_smote)
+
+testing_encoded_points_ae_12D = ae_encoded_points(
+  autoencoder_result[[12]]$autoencoder_model,
+  autoencoder_result[[12]]$input_layer,
+  autoencoder_result[[12]]$encoder,
+  code_size = 12,
+  testing_data_x_std)
+
+svm_model_ae = svm(
+    x = training_encoded_points_ae_12D, 
+    y = training_data_smote$DEFAULT_PAYMENT_NEXT_MONTH,
+    type = "C-classification",
+    kernel = "radial",
+    cost = 100,
+    gamma = 0.1,
+    scale = FALSE,
+    )
+
+summary(svm_model_ae)
+
+
+svm_test_predict_ae = predict(svm_model_ae, testing_encoded_points_ae_12D)
+
+
+```
+
+
+
+
+## SVMs with Variational Autoencoder
+
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae",
+                      "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "test_data_pca_scores",
+                     "svm_test_predict_ae",
+                     "training_encoded_points_ae_12D",
+                     "testing_encoded_points_ae_12D"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+training_encoded_points_vae_12D = vae_encoded_points(
+  vae_result[[12]]$vae_model,
+  vae_result[[12]]$input_layer,
+  vae_result[[12]]$z,
+  latent_space_dim = 12,
+  training_data_x_std_smote)
+
+testing_encoded_points_vae_12D = vae_encoded_points(
+  vae_result[[12]]$vae_model,
+  vae_result[[12]]$input_layer,
+  vae_result[[12]]$z,
+  latent_space_dim = 12,
+  as.matrix(testing_data_x_std))
+
+svm_model_vae = svm(
+    x = training_encoded_points_vae_12D, 
+    y = training_data_smote$DEFAULT_PAYMENT_NEXT_MONTH,
+    type = "C-classification",
+    kernel = "radial",
+    cost = 100,
+    gamma = 0.1,
+    scale = FALSE,
+    )
+
+summary(svm_model_vae)
+
+
+svm_test_predict_vae = predict(svm_model_vae, testing_encoded_points_vae_12D)
+
+```
+
+# Model Evaluation
+
+```{r, echo=FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "test_data_pca_scores",
+                     "svm_test_predict_ae",
+                     "svm_test_predict_vae",
+                     "training_encoded_points_ae_12D",
+                     "testing_encoded_points_ae_12D",
+                     "training_encoded_points_vae_12D",
+                     "testing_encoded_points_vae_12D"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+
+svm_metrics = function(confusion_matrix){
+precision = confusion_matrix$byClass['Pos Pred Value']
+recall    = confusion_matrix$byClass['Sensitivity']
+F1_score = 2 * (precision * recall) / (precision + recall)
+return (list(F1_score=F1_score, recall=recall, precision=precision))
+}
+
+svm_pca_accuracy = mean(svm_test_predict_pca==as.numeric(as.matrix(testing_data[,27])))
+confusion_matrix_pca = confusionMatrix(svm_test_predict_pca, testing_data$DEFAULT_PAYMENT_NEXT_MONTH)
+svm_metric_pca = svm_metrics(confusion_matrix_pca)
+roc_curve_pca <- roc(response = testing_data$DEFAULT_PAYMENT_NEXT_MONTH, predictor = as.numeric(svm_test_predict_pca))
+AUC_pca <- auc(roc_curve_pca)
+svm_pca_accuracy
+svm_metric_pca$recall
+svm_metric_pca$precision
+svm_metric_pca$F1_score
+AUC_pca
+
+svm_ae_accuracy = mean(svm_test_predict_ae==as.numeric(as.matrix(testing_data[,27])))
+confusion_matrix_ae = confusionMatrix(svm_test_predict_ae, testing_data$DEFAULT_PAYMENT_NEXT_MONTH)
+svm_metric_ae = svm_metrics(confusion_matrix_ae)
+roc_curve_ae <- roc(response = testing_data$DEFAULT_PAYMENT_NEXT_MONTH, predictor = as.numeric(svm_test_predict_ae))
+AUC_ae <- auc(roc_curve_ae)
+svm_ae_accuracy
+svm_metric_ae$recall
+svm_metric_ae$precision
+svm_metric_ae$F1_score
+AUC_ae
+
+
+svm_vae_accuracy = mean(svm_test_predict_vae==as.numeric(as.matrix(testing_data[,27])))
+confusion_matrix_vae = confusionMatrix(svm_test_predict_vae, testing_data$DEFAULT_PAYMENT_NEXT_MONTH)
+
+svm_metric_vae = svm_metrics(confusion_matrix_vae)
+roc_curve_vae <- roc(response = testing_data$DEFAULT_PAYMENT_NEXT_MONTH, predictor = as.numeric(svm_test_predict_vae))
+AUC_vae <- auc(roc_curve_vae)
+svm_vae_accuracy
+svm_metric_vae$recall
+svm_metric_vae$precision
+svm_metric_vae$F1_score
+AUC_vae
+
+```
+
+## PCA Customer Segement SVM Predictions
+
+```{r, echo = FALSE}
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_pca",
+                     "kmeans_result_ae",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "test_data_pca_scores",
+                     "svm_test_predict_ae",
+                     "svm_test_predict_vae",
+                     "training_encoded_points_ae_12D",
+                     "testing_encoded_points_ae_12D",
+                      "training_encoded_points_vae_12D",
+                     "testing_encoded_points_vae_12D",
+                     "svm_metrics"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+# Let's assume 'data_vpca' contains your features transformed by Vpca and 'clusters' is a vector of cluster assignments from k-means
+# Also, 'labels' is a vector containing the true classification labels for your dataset
+
+# Create a list to store SVM models, one for each cluster
+
+svm_models_pca <- list()
+performance_metrics_pca <- data.frame(Cluster = integer(),
+                                     Accuracy = numeric(),
+                                     Recall = numeric(),
+                                     Precision = numeric(),
+                                     F1_Score = numeric(),
+                                     AUC = numeric())
+
+# Loop through each cluster and train an SVM model
+clusters_pca = kmeans_result_pca$cluster
+training_data_smote_with_clusters_pca = training_data_smote%>%
+  mutate(Cluster = clusters_pca)
+training_labels_pca = training_data_smote_with_clusters_pca$DEFAULT_PAYMENT_NEXT_MONTH
+training_pca_scores_with_clusters = pca_scores%>%
+  mutate(Cluster = clusters_pca)
+
+
+kmeans_test_data_result_pca <- kmeans(test_data_pca_scores[,13], centers = 3, nstart = 25)
+test_data_clusters_pca = kmeans_test_data_result_pca$cluster
+testing_pca_scores_with_clusters = test_data_pca_scores%>%
+  mutate(Cluster = test_data_clusters_pca)
+testing_data_with_clusters_pca = testing_data%>%
+  mutate(Cluster = test_data_clusters_pca)
+testing_labels_pca = testing_data_with_clusters_pca$DEFAULT_PAYMENT_NEXT_MONTH
+
+
+for (k in unique(clusters_pca)) {
+  # Subset the data for cluster 'k'
+  cluster_training_data_pca <- training_pca_scores_with_clusters[clusters_pca == k, ]
+  cluster_training_labels_pca <- training_labels_pca[clusters_pca == k]
+  cluster_test_labels_pca <- testing_labels_pca[test_data_clusters_pca == k]
+  
+  # Train the SVM model
+  svm_models_pca[[k]] <- svm(x = cluster_training_data_pca[, -c(14:27)], y = cluster_training_labels_pca, kernel = "radial", cost = 100, gamma = 0.1)
+  
+  # Make predictions
+  cluster_test_data_pca = testing_pca_scores_with_clusters[test_data_clusters_pca == k, ]
+  predictions <- predict(svm_models_pca[[k]], cluster_test_data_pca[, -c(14:27)])
+  
+  # Calculate performance metrics
+  cm <- confusionMatrix(predictions, as.factor(cluster_test_labels_pca))
+  accuracy <- cm$overall['Accuracy']
+  recall <- cm$byClass['Sensitivity']
+  precision <- cm$byClass['Pos Pred Value']
+  F1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Calculate AUC
+  roc_curve <- roc(response = as.numeric(as.factor(cluster_test_labels_pca)), predictor = as.numeric(predictions))
+  auc_value <- auc(roc_curve)
+  
+  # Store the performance metrics
+  performance_metrics_pca <- rbind(performance_metrics_pca, data.frame(Cluster = k,
+                                                                     Accuracy = accuracy,
+                                                                     Recall = recall,
+                                                                     Precision = precision,
+                                                                     F1_Score = F1_score,
+                                                                     AUC = auc_value))
+}
+
+# Display the performance metrics for each cluster
+print(performance_metrics_pca)
+```
+
+
+## AE Customer Segement SVM Predictions
+
+```{r, echo=FALSE}
+
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "kmeans_result_ae",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "svm_test_predict_ae",
+                     "svm_test_predict_vae",
+                     "training_encoded_points_ae_12D",
+                     "testing_encoded_points_ae_12D",
+                      "training_encoded_points_vae_12D",
+                     "testing_encoded_points_vae_12D",
+                     "svm_metrics"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+# Let's assume 'data_vae' contains your features transformed by VAE and 'clusters' is a vector of cluster assignments from k-means
+# Also, 'labels' is a vector containing the true classification labels for your dataset
+
+# Create a list to store SVM models, one for each cluster
+
+svm_models_ae <- list()
+performance_metrics_ae <- data.frame(Cluster = integer(),
+                                  Accuracy = numeric(),
+                                  Recall = numeric(),
+                                  Precision = numeric(),
+                                  F1_Score = numeric(),
+                                  AUC = numeric())
+
+# Loop through each cluster and train an SVM model
+clusters_ae = kmeans_result_ae$cluster
+training_data_smote_with_clusters_ae = training_data_smote%>%
+                                   mutate(Cluster = clusters_ae)
+training_labels_ae = training_data_smote_with_clusters_ae$DEFAULT_PAYMENT_NEXT_MONTH
+training_encoded_points_ae_12D_with_clusters = training_encoded_points_ae_12D%>%
+                                                mutate(Cluster = clusters_ae)
+
+
+kmeans_test_data_result_ae <- kmeans(testing_encoded_points_ae_12D, centers = 2, nstart = 25)
+test_data_clusters_ae = kmeans_test_data_result_ae$cluster
+testing_encoded_points_ae_12D_with_clusters = testing_encoded_points_ae_12D%>%
+                                  mutate(Cluster = test_data_clusters_ae)
+testing_data_with_clusters_ae = testing_data%>%
+                               mutate(Cluster = test_data_clusters_ae)
+testing_labels_ae = testing_data_with_clusters_ae$DEFAULT_PAYMENT_NEXT_MONTH
+
+
+for (k in unique(clusters_ae)) {
+  # Subset the data for cluster 'k'
+  cluster_training_data_ae <- training_encoded_points_ae_12D_with_clusters[clusters_ae == k, ]
+  cluster_training_labels_ae <- training_labels_ae[clusters_ae == k]
+  cluster_test_labels_ae <- testing_labels_ae[test_data_clusters_ae == k]
+  
+  # Train the SVM model
+  svm_models_ae[[k]] <- svm(x = cluster_training_data_ae[, -13], y = cluster_training_labels_ae, kernel = "radial", cost = 100, gamma = 0.1)
+  
+  # Make predictions
+  cluster_test_data_ae = testing_encoded_points_ae_12D_with_clusters[test_data_clusters_ae == k, ]
+  predictions <- predict(svm_models_ae[[k]], cluster_test_data_ae[, -13])
+  
+  # Calculate performance metrics
+  cm <- confusionMatrix(predictions, as.factor(cluster_test_labels_ae))
+  accuracy <- cm$overall['Accuracy']
+  recall <- cm$byClass['Sensitivity']
+  precision <- cm$byClass['Pos Pred Value']
+  F1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Calculate AUC
+  roc_curve <- roc(response = as.numeric(as.factor(cluster_test_labels_ae)), predictor = as.numeric(predictions))
+  auc_value <- auc(roc_curve)
+  
+  # Store the performance metrics
+  performance_metrics_ae <- rbind(performance_metrics_ae, data.frame(Cluster = k,
+                                                               Accuracy = accuracy,
+                                                               Recall = recall,
+                                                               Precision = precision,
+                                                               F1_Score = F1_score,
+                                                               AUC = auc_value))
+}
+
+# Display the performance metrics for each cluster
+print(performance_metrics_ae)
+
+```
+
+
+## VAE Customer Segement SVM Predictions
+
+```{r, echo=FALSE}
+
+objects_to_keep <- c("credit_default_data", 
+                     "training_data",
+                     "testing_data",
+                     "training_data_x",
+                     "training_data_x_std",
+                     "testing_data_x",
+                     "testing_data_x_std",
+                     "training_data_smote",
+                     "training_data_x_smote",
+                     "training_data_x_std_smote",
+                     "mu_training_data_smote",
+                     "sigma_training_data_smote",
+                     "pca_scores",
+                     "eigenvectors",
+                     "autoencoder_mse",
+                     "vae_mse",
+                     "autoencoder_result",
+                     "vae_result",
+                     "ae_encoded_points",
+                     "vae_encoded_points",
+                     "encoded_points_ae",
+                     "encoded_points_vae",
+                     "credit_data_vae_segmentation",
+                     "kmeans_result_vae",
+                     "svm_test_predict_pca",
+                     "svm_test_predict_ae",
+                     "svm_test_predict_vae",
+                     "training_encoded_points_vae_12D",
+                     "testing_encoded_points_vae_12D",
+                     "svm_metrics"
+                     )
+rm(list = setdiff(ls(), objects_to_keep))
+# Let's assume 'data_vae' contains your features transformed by VAE and 'clusters' is a vector of cluster assignments from k-means
+# Also, 'labels' is a vector containing the true classification labels for your dataset
+
+# Create a list to store SVM models, one for each cluster
+
+svm_models <- list()
+performance_metrics <- data.frame(Cluster = integer(),
+                                  Accuracy = numeric(),
+                                  Recall = numeric(),
+                                  Precision = numeric(),
+                                  F1_Score = numeric(),
+                                  AUC = numeric())
+
+# Loop through each cluster and train an SVM model
+clusters = kmeans_result_vae$cluster
+training_data_smote_with_clusters = training_data_smote%>%
+                                   mutate(Cluster = clusters)
+training_labels = training_data_smote_with_clusters$DEFAULT_PAYMENT_NEXT_MONTH
+training_encoded_points_vae_12D_with_clusters = training_encoded_points_vae_12D%>%
+                                                mutate(Cluster = clusters)
+
+
+kmeans_test_data_result_vae <- kmeans(testing_encoded_points_vae_12D, centers = 3, nstart = 25)
+test_data_clusters = kmeans_test_data_result_vae$cluster
+testing_encoded_points_vae_12D_with_clusters = testing_encoded_points_vae_12D%>%
+                                  mutate(Cluster = test_data_clusters)
+testing_data_with_clusters = testing_data%>%
+                               mutate(Cluster = test_data_clusters)
+testing_labels = testing_data_with_clusters$DEFAULT_PAYMENT_NEXT_MONTH
+
+
+for (k in unique(clusters)) {
+  # Subset the data for cluster 'k'
+  cluster_training_data <- training_encoded_points_vae_12D_with_clusters[clusters == k, ]
+  cluster_training_labels <- training_labels[clusters == k]
+  cluster_test_labels <- testing_labels[test_data_clusters == k]
+  
+  # Train the SVM model
+  svm_models[[k]] <- svm(x = cluster_training_data[, -13], y = cluster_training_labels, kernel = "radial", cost = 100, gamma = 0.1)
+  
+  # Make predictions
+  cluster_test_data = testing_encoded_points_vae_12D_with_clusters[test_data_clusters == k, ]
+  predictions <- predict(svm_models[[k]], cluster_test_data[, -13])
+  
+  # Calculate performance metrics
+  cm <- confusionMatrix(predictions, as.factor(cluster_test_labels))
+  accuracy <- cm$overall['Accuracy']
+  recall <- cm$byClass['Sensitivity']
+  precision <- cm$byClass['Pos Pred Value']
+  F1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Calculate AUC
+  roc_curve <- roc(response = as.numeric(as.factor(cluster_test_labels)), predictor = as.numeric(predictions))
+  auc_value <- auc(roc_curve)
+  
+  # Store the performance metrics
+  performance_metrics <- rbind(performance_metrics, data.frame(Cluster = k,
+                                                               Accuracy = accuracy,
+                                                               Recall = recall,
+                                                               Precision = precision,
+                                                               F1_Score = F1_score,
+                                                               AUC = auc_value))
+}
+
+# # Display the performance metrics for each cluster
+ print(performance_metrics)
+# 
+# 
+# Combine Cluster 2+3 and see prediction results
+
+
+training_encoded_points_vae_12D_cluster_2_3 = training_encoded_points_vae_12D_with_clusters%>%
+                                              filter(Cluster %in% c(2,3))
+
+training_data_smote_with_clusters_2_3 =training_data_smote_with_clusters%>%
+                                              filter(Cluster %in% c(2,3))
+
+training_labels_cluster_2_3 = training_data_smote_with_clusters_2_3$DEFAULT_PAYMENT_NEXT_MONTH
+
+
+testing_encoded_points_vae_12D_cluster_2_3 = testing_encoded_points_vae_12D_with_clusters%>%
+                                              filter(Cluster %in% c(2,3))
+testing_data_with_clusters_2_3 = testing_data_with_clusters%>%
+                                filter(Cluster %in% c(2,3))
+testing_labels_cluster_2_3 = testing_data_with_clusters_2_3$DEFAULT_PAYMENT_NEXT_MONTH
+
+
+
+svm_model_vae_cluster_2_3 = svm(
+    x = training_encoded_points_vae_12D_cluster_2_3[, -13],
+    y = training_labels_cluster_2_3,
+    type = "C-classification",
+    kernel = "radial",
+    cost = 100,
+    gamma = 0.1,
+    scale = FALSE,
+    )
+
+summary(svm_model_vae_cluster_2_3)
+
+
+svm_test_predict_cluster_2_3 = predict(svm_model_vae_cluster_2_3, testing_encoded_points_vae_12D_cluster_2_3[, -13])
+svm_vae_accuracy_cluster_2_3 = mean(svm_test_predict_cluster_2_3==as.numeric(as.matrix(testing_data_with_clusters_2_3[,27])))
+
+confusion_matrix_vae_cluster_2_3 = confusionMatrix(svm_test_predict_cluster_2_3, testing_data_with_clusters_2_3$DEFAULT_PAYMENT_NEXT_MONTH)
+
+svm_metric_vae_cluster_2_3 = svm_metrics(confusion_matrix_vae_cluster_2_3)
+
+roc_curve_vae_cluster_2_3 <- roc(response = testing_data_with_clusters_2_3$DEFAULT_PAYMENT_NEXT_MONTH, predictor = as.numeric(svm_test_predict_cluster_2_3))
+AUC_vae_cluster_2_3 <- auc(roc_curve_vae_cluster_2_3)
+
+svm_vae_accuracy_cluster_2_3
+svm_metric_vae_cluster_2_3$recall
+svm_metric_vae_cluster_2_3$precision
+svm_metric_vae_cluster_2_3$F1_score
+AUC_vae_cluster_2_3
+
+```
+
+
+
+

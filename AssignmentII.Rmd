@@ -92,7 +92,7 @@ loo_cv_result = loo_cv(temp_data,bandwidths)
 fitted_vals = loo_cv_result$fitted_values
 cv_errors = loo_cv_result$errors
 cv_mse = loo_cv_result$mse
-plot(cv_mse, type = "l")
+plot(x= bandwidths, y=cv_mse, type = "l", main="Leave on out cross validation", xlab="h")
 optimal_bandwith = bandwidths[which.min(cv_mse)]
 
 # Use optimal bandwith to plot estimate
@@ -129,12 +129,12 @@ regopt = function(tuning, Y, X, nitermax=20){
   lambda2 = tuning[2]
   
   # Gradient Descent Learning Rate hyperparameter 
-  alpha = 0.001 # Learning rate
+  alpha = 0.00001 # Learning rate
   p = ncol(X)
-  beta  = rep(0,p)
+  beta  = rnorm(p, 0, 0.01) # Ensures random starting point
   
   A = NULL
-  if(all(tuning==c(0,0))){
+  if(lambda1 == 0 && lambda2 == 0){
     # compute OLS Beta
     beta = ols_beta(Y,X)
   
@@ -214,7 +214,6 @@ loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
     y_training_set  = Y[-i,]
     y_validation_set = Y[i,]
     for (j in 1: length(lambdas)){
-      tuning = c(0, 0)
       result = NA
       lambda = lambdas[j]
       if(lasso_regression){
@@ -236,7 +235,9 @@ loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
 }
 
 # Lambda range [0,5] across 100 points
-lambdas = seq(0,5, length.out=100)
+lambdas_small <- seq(0, 1, length.out = 100)  # Finer grid for smaller lambdas
+lambdas_large <- seq(1.1, 5, length.out = 100) # Coarser grid for larger lambdas
+lambdas <- c(lambdas_small, lambdas_large)
 
 # Cross-validation for Lasso Regression
 lasso_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=TRUE)
@@ -250,6 +251,7 @@ optimal_lasso_lambda
 tuning = c(optimal_lasso_lambda,0 )
 lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 lasso_coefficients = lasso_result$beta
+plot(x= lambdas, y=lasso_reg_mse, type = "l", main="Lasso Regression LOOCV", xlab="lambda", ylab="CV MSE")
 
 # Cross-validation for Ridge Regression
 ridge_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=FALSE)
@@ -263,6 +265,20 @@ optimal_ridge_lambda
 tuning = c(0,optimal_ridge_lambda )
 ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 ridge_coefficients = ridge_result$beta
+plot(x= lambdas, y=ridge_reg_mse, type = "l", main="Ridge Regression LOOCV", xlab="lambda", ylab="CV MSE")
+
+library(corrplot)
+corr_matrix = cor(as.matrix(X_train))
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(corr_matrix, method = "color", col = col(200),
+        type = "full", order = "original",
+        addCoef.col = "white",
+        tl.col = "black", tl.srt = 45,
+       tl.pos = "lt",
+       tl.cex = 0.6, cl.cex = 0.7,
+        number.cex = 0.5
+       )
+
 ```
 
 ## b (iii)
