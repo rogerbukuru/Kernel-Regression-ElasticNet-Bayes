@@ -123,7 +123,8 @@ in_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==TRUE)
 out_of_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==FALSE)
-
+set.seed(435)
+beta_init = rnorm(100, 0, 0.01)
 regopt = function(tuning, Y, X, nitermax=20){
   lambda1 = tuning[1]
   lambda2 = tuning[2]
@@ -131,7 +132,7 @@ regopt = function(tuning, Y, X, nitermax=20){
   # Gradient Descent Learning Rate hyperparameter 
   alpha = 0.00001 # Learning rate
   p = ncol(X)
-  beta  = rnorm(p, 0, 0.01) # Ensures random starting point
+  beta  = beta_init[1:p] # Ensures random starting point
   
   A = NULL
   if(lambda1 == 0 && lambda2 == 0){
@@ -199,14 +200,16 @@ print(result)
 ## b(ii)
 
 ```{r}
+
 loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
   
   n = nrow(Y)
+  p = ncol(X)
   # Setup up cross-validation grid matrix
   cv_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambdas)) 
   # Setup cross validation error grid matrix
   cv_error_grid = matrix(data=NA, nrow=nrow(X), ncol = length(lambdas))
-  
+
   for( i in 1:n){
     # Leave one observation out
     x_training_set = X[-i,]
@@ -235,9 +238,7 @@ loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
 }
 
 # Lambda range [0,5] across 100 points
-lambdas_small <- seq(0, 1, length.out = 100)  # Finer grid for smaller lambdas
-lambdas_large <- seq(1.1, 5, length.out = 100) # Coarser grid for larger lambdas
-lambdas <- c(lambdas_small, lambdas_large)
+lambdas = 10^seq(0,log10(5), length.out=100)
 
 # Cross-validation for Lasso Regression
 lasso_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=TRUE)
@@ -248,9 +249,10 @@ optimal_lasso_lambda = lambdas[which.min(lasso_reg_mse)]
 optimal_lasso_lambda 
 
 # Lasso Coefficients
-tuning = c(optimal_lasso_lambda,0 )
+tuning = c(1.17653,0 )
 lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 lasso_coefficients = lasso_result$beta
+lasso_coefficients
 plot(x= lambdas, y=lasso_reg_mse, type = "l", main="Lasso Regression LOOCV", xlab="lambda", ylab="CV MSE")
 
 # Cross-validation for Ridge Regression
@@ -262,9 +264,10 @@ optimal_ridge_lambda = lambdas[which.min(ridge_reg_mse)]
 optimal_ridge_lambda 
 
 # Ridge Coefficients
-tuning = c(0,optimal_ridge_lambda )
+tuning = c(0,2.044812 )
 ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 ridge_coefficients = ridge_result$beta
+ridge_coefficients
 plot(x= lambdas, y=ridge_reg_mse, type = "l", main="Ridge Regression LOOCV", xlab="lambda", ylab="CV MSE")
 
 library(corrplot)
@@ -291,7 +294,7 @@ bootstrap_lasso_fit = function(data, indices){
  Y_train = as.matrix(data$lpsa)
  colnames(Y_train) = "lpsa"
  X_train = as.matrix(data[, -9])
- tuning = c(optimal_lasso_lambda,0 )
+ tuning = c(1.17653,0 )
  lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
  lasso_coefficients = lasso_result$beta
  return(lasso_coefficients)
