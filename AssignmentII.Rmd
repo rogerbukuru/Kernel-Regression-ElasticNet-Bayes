@@ -249,7 +249,7 @@ optimal_lasso_lambda = lambdas[which.min(lasso_reg_mse)]
 optimal_lasso_lambda 
 
 # Lasso Coefficients
-tuning = c(1.17653,0 )
+tuning = c(optimal_lasso_lambda,0 )
 lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 lasso_coefficients = lasso_result$beta
 lasso_coefficients
@@ -264,7 +264,7 @@ optimal_ridge_lambda = lambdas[which.min(ridge_reg_mse)]
 optimal_ridge_lambda 
 
 # Ridge Coefficients
-tuning = c(0,2.044812 )
+tuning = c(0,optimal_ridge_lambda )
 ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
 ridge_coefficients = ridge_result$beta
 ridge_coefficients
@@ -432,5 +432,8 @@ plot(t_j, observed_profile, type = 'b', col = 'red', ylim = c(min(observed_profi
 lines(t_j, predicted_profile, type = 'b', col = 'black')
 lines(t_j, predicted_profile_lower, type = 'b', col = 'blue', lty = 2)
 lines(t_j, predicted_profile_upper, type = 'b', col = 'blue', lty = 2)
+legend("topleft", legend = c("Observed Profile", "Predicted Profile", "95% CI Lower", "95% CI Upper"), col = c("red", "black", "blue", "blue"), lty = c(1, 1, 2, 2), pch = c(1, 1, NA, NA), pt.cex = 1, cex = 0.8)
+
+
 
 ```
