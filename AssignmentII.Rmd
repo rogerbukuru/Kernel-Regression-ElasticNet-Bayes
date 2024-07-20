@@ -11,7 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Question 1
 
-## (a)
 
 ## b 
 
@@ -123,8 +122,9 @@ in_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==TRUE)
 out_of_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==FALSE)
-set.seed(435)
-beta_init = rnorm(100, 0, 0.01)
+#set.seed(435)
+#beta_init = rnorm(100, 0, 0.01)
+
 regopt = function(tuning, Y, X, nitermax=20){
   lambda1 = tuning[1]
   lambda2 = tuning[2]
@@ -132,7 +132,7 @@ regopt = function(tuning, Y, X, nitermax=20){
   # Gradient Descent Learning Rate hyperparameter 
   alpha = 0.00001 # Learning rate
   p = ncol(X)
-  beta  = beta_init[1:p] # Ensures random starting point
+  beta  = rnorm(p, 0, 0.01) #beta_init[1:p] # Ensures random starting point
   
   A = NULL
   if(lambda1 == 0 && lambda2 == 0){
@@ -433,7 +433,5 @@ lines(t_j, predicted_profile, type = 'b', col = 'black')
 lines(t_j, predicted_profile_lower, type = 'b', col = 'blue', lty = 2)
 lines(t_j, predicted_profile_upper, type = 'b', col = 'blue', lty = 2)
 legend("topleft", legend = c("Observed Profile", "Predicted Profile", "95% CI Lower", "95% CI Upper"), col = c("red", "black", "blue", "blue"), lty = c(1, 1, 2, 2), pch = c(1, 1, NA, NA), pt.cex = 1, cex = 0.8)
-
-
 
 ```
