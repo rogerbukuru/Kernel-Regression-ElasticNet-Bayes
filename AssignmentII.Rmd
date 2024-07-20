@@ -294,7 +294,7 @@ bootstrap_lasso_fit = function(data, indices){
  Y_train = as.matrix(data$lpsa)
  colnames(Y_train) = "lpsa"
  X_train = as.matrix(data[, -9])
- tuning = c(1.17653,0 )
+ tuning = c(optimal_lasso_lambda,0 )
  lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
  lasso_coefficients = lasso_result$beta
  return(lasso_coefficients)
