@@ -116,23 +116,21 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 library(tidyverse)
 
 rm(list = ls())
+
 prostate_data = read.table("data/prostate_data.txt")
 head(prostate_data)
 in_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==TRUE)
 out_of_sample_obs = prostate_data%>%as_tibble() %>%
                 filter(train==FALSE)
-#set.seed(435)
-#beta_init = rnorm(100, 0, 0.01)
 
 regopt = function(tuning, Y, X, nitermax=20){
   lambda1 = tuning[1]
   lambda2 = tuning[2]
   
-  # Gradient Descent Learning Rate hyperparameter 
-  alpha = 0.00001 # Learning rate
   p = ncol(X)
-  beta  = rnorm(p, 0, 0.01) #beta_init[1:p] # Ensures random starting point
+  beta  = rep(0, p)
+  errortol = 1e-4
   
   A = NULL
   if(lambda1 == 0 && lambda2 == 0){
@@ -141,11 +139,19 @@ regopt = function(tuning, Y, X, nitermax=20){
   
   }else {
      for (i in 1:nitermax) {
-       beta = beta_gradient_desc(tuning, Y, X, beta,alpha) 
+       # Store previous beta for convergence check
+       beta_prev = beta
+       # Update each coefficient in turn
+       for (l in 1:p){
+          beta[l] = beta_gradient_desc(tuning, Y, X, beta,l) 
+       }
+       # Check for convergence
+       if( max(abs(beta - beta_prev)) < errortol){
+         break
+       }
      }
   }
   A = elastic_net_obj_function(tuning, Y,X, beta) 
-  errortol = t((Y-X%*%beta))%*%(Y-X%*%beta) # This is the residual sum of of squares error
   return(list(errortol= errortol, beta = beta, A = A))
   
 }
@@ -174,14 +180,14 @@ elastic_net_obj_function = function(tuning, Y,X, beta){
   return(A)
 }
   
-beta_gradient_desc = function(tuning, Y,X, beta, alpha){
-  lambda1 = tuning[1]
-  lambda2 = tuning[2]
-  gradient_rss   = -2*(t(X) %*%Y) + 2*(t(X)%*%X%*%beta)
-  gradient_lasso = lambda1 * sign(beta)
-  gradient_ridge = 2*lambda2 * beta
-  beta_old_slope = gradient_rss + gradient_lasso + gradient_ridge
-  beta_new = beta -  (alpha*beta_old_slope)
+
+beta_gradient_desc = function(tuning, Y,X, beta, l){
+  lambda1     = tuning[1]
+  lambda2     = tuning[2]
+  r           = Y - X[, -l]%*%beta[-l] # exclude effect of beta_l
+  numerator   = sum(X[, l] * r) - (lambda1 / 2) * sign(beta[l]) - lambda2 * beta[l]
+  denominator = sum(X[, l]^2)
+  beta_new    = numerator / denominator
   return (beta_new)
 }
 
@@ -238,7 +244,8 @@ loo_cv = function(Y,X, lambdas, lasso_regression=TRUE){
 }
 
 # Lambda range [0,5] across 100 points
-lambdas = 10^seq(0,log10(5), length.out=100)
+#lambdas = 10^seq(0,log10(5), length.out=100)
+lambdas = seq(0,5, length.out=100)
 
 # Cross-validation for Lasso Regression
 lasso_loo_cv_result = loo_cv(Y_train,X_train,lambdas,lasso_regression=TRUE)
@@ -250,7 +257,7 @@ optimal_lasso_lambda
 
 # Lasso Coefficients
 tuning = c(optimal_lasso_lambda,0 )
-lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 20)
 lasso_coefficients = lasso_result$beta
 lasso_coefficients
 plot(x= lambdas, y=lasso_reg_mse, type = "l", main="Lasso Regression LOOCV", xlab="lambda", ylab="CV MSE")
@@ -265,7 +272,7 @@ optimal_ridge_lambda
 
 # Ridge Coefficients
 tuning = c(0,optimal_ridge_lambda )
-ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+ridge_result <- regopt(tuning, Y_train, X_train, nitermax = 20)
 ridge_coefficients = ridge_result$beta
 ridge_coefficients
 plot(x= lambdas, y=ridge_reg_mse, type = "l", main="Ridge Regression LOOCV", xlab="lambda", ylab="CV MSE")
@@ -295,7 +302,7 @@ bootstrap_lasso_fit = function(data, indices){
  colnames(Y_train) = "lpsa"
  X_train = as.matrix(data[, -9])
  tuning = c(optimal_lasso_lambda,0 )
- lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 100)
+ lasso_result <- regopt(tuning, Y_train, X_train, nitermax = 20)
  lasso_coefficients = lasso_result$beta
  return(lasso_coefficients)
 }
