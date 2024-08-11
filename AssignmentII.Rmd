@@ -328,7 +328,7 @@ print(confidence_intervals)
 ```{r}
 library(MASS)
 library(coda)
-rm(list = ls())
+#rm(list = ls())
 
 patient_profiles = read.csv2(file="data/profiles2024.csv", header=TRUE)
 patient_profiles = as.matrix(patient_profiles[1:25,])
