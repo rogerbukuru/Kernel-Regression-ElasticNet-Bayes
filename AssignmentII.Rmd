@@ -21,7 +21,7 @@ library(ggplot2)
 library(tidyverse)
 library(dplyr)
 
-rm(list = ls())
+#rm(list = ls())
 filepath = "data/tempexam.csv"
 temp_data = read.csv2(filepath)
 summary(temp_data)
@@ -115,7 +115,7 @@ ggplot(final_temp_data, aes(x = x, y = y)) +
 ```{r}
 library(tidyverse)
 
-rm(list = ls())
+#rm(list = ls())
 
 prostate_data = read.table("data/prostate_data.txt")
 head(prostate_data)
@@ -161,13 +161,13 @@ ols_beta = function(Y,X){
   return (beta_hat)
 }
 
-  compute_A <- function(Y, X, beta, lambda1, lambda2) {
-    residual_sum_squares <- sum((Y - X %*% beta)^2)
-    lasso_penalty <- lambda1 * sum(abs(beta))
-    ridge_penalty <- lambda2 * sum(beta^2)
-    A <- residual_sum_squares + lasso_penalty + ridge_penalty
-    return(A)
-  }
+compute_A <- function(Y, X, beta, lambda1, lambda2) {
+  residual_sum_squares <- sum((Y - X %*% beta)^2)
+  lasso_penalty <- lambda1 * sum(abs(beta))
+  ridge_penalty <- lambda2 * sum(beta^2)
+  A <- residual_sum_squares + lasso_penalty + ridge_penalty
+  return(A)
+}
   
 elastic_net_obj_function = function(tuning, Y,X, beta){
   lambda1 = tuning[1]
